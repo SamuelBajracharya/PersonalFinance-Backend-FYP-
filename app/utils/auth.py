@@ -57,6 +57,11 @@ def create_refresh_token(data: dict, expires_delta: timedelta = None) -> str:
     return _create_jwe_token(data, expires_delta or timedelta(days=7))
 
 
+def create_temp_token(data: dict, expires_delta: timedelta = None) -> str:
+    """Create encrypted JWE temporary token for 2FA."""
+    return _create_jwe_token(data, expires_delta or timedelta(minutes=5))
+
+
 def decrypt_token(token: str) -> dict:
     """Decrypt JWE token back into a dict payload."""
     try:
