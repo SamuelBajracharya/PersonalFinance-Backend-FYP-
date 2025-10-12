@@ -9,3 +9,13 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+class TempToken(BaseModel):
+    temp_token: str
+    message: str
+
+class OTPResponse(BaseModel):
+    message: str
+
+class OTPVerify(BaseModel):
+    otp: str

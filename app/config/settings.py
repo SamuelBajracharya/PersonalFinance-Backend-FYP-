@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int
     DATABASE_URL: str
 
+    # SMTP settings
+    SMTP_HOST: str
+    SMTP_PORT: int
+    SMTP_USER: str
+    SMTP_PASSWORD: str
+    SMTP_FROM_EMAIL: str
+
     class Config:
         env_file = ".env"
 
