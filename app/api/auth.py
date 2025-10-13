@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from app.crud import (
     create_user,
     get_user_by_email,
@@ -7,18 +7,36 @@ from app.crud import (
     set_otp_as_used,
     delete_otp,
     update_user_verified_status,
+    update_user_password,
 )
-from app.schemas import User, UserCreate, TempToken, UserLogin, Token, OtpRequest, OtpVerify
+from app.schemas import (
+    User,
+    UserCreate,
+    TempToken,
+    UserLogin,
+    Token,
+    OtpRequest,
+    OtpVerify,
+    PasswordResetRequest,
+    ResetToken,
+    PasswordReset,
+)
 from app.models.otp import OtpPurpose
-from app.utils import get_current_user, get_password_hash, get_db, get_current_user_from_temp_token
+from app.utils.deps import (
+    get_current_user,
+    get_db,
+    get_current_user_from_temp_token,
+    get_current_user_from_reset_token,
+)
 from sqlalchemy.orm import Session
-from app.utils import (
+from app.utils.auth import (
     create_temp_token,
     verify_password,
-    send_otp_email,
     create_access_token,
     create_refresh_token,
+    get_password_hash,
 )
+from app.utils.email import send_otp_email
 import random
 import string
 import datetime
@@ -44,6 +62,25 @@ async def login_user(user_login: UserLogin, db: Session = Depends(get_db)):
         "message": "Login successful, please request an OTP.",
     }
 
+@router.post("/request-password-reset", response_model=TempToken)
+async def request_password_reset(
+    request: PasswordResetRequest, db: Session = Depends(get_db)
+):
+    user = get_user_by_email(db, email=request.email)
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User with this email does not exist.",
+        )
+
+    token_data = {"id": user.user_id, "token_type": "temp"}
+    temp_token = create_temp_token(data=token_data)
+
+    return {
+        "temp_token": temp_token,
+        "message": "User found. Please request an OTP for password reset.",
+    }
+
 @router.post("/request-otp")
 async def request_otp(
     otp_request: OtpRequest,
@@ -63,7 +100,7 @@ async def request_otp(
 
     return {"message": "OTP has been sent to your email."}
 
-@router.post("/verify-otp", response_model=Token)
+@router.post("/verify-otp")
 async def verify_otp(
     otp_data: OtpVerify,
     current_user: User = Depends(get_current_user_from_temp_token),
@@ -81,20 +118,47 @@ async def verify_otp(
     if not verify_password(otp_data.code, db_otp.code):
         raise HTTPException(status_code=400, detail="Invalid OTP.")
 
-    if otp_data.purpose == OtpPurpose.ACCOUNT_VERIFICATION:
-        update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)
-
     set_otp_as_used(db, db_otp)
 
+    if otp_data.purpose == OtpPurpose.ACCOUNT_VERIFICATION:
+        update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)
+        token_data = {"sub": current_user.email, "id": current_user.user_id}
+        access_token = create_access_token(data=token_data)
+        refresh_token = create_refresh_token(data=token_data)
+        return Token(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+        )
+
+    if otp_data.purpose == OtpPurpose.PASSWORD_RESET:
+        token_data = {"id": current_user.user_id, "token_type": "reset"}
+        reset_token = create_temp_token(data=token_data)
+        return ResetToken(
+            reset_token=reset_token,
+            message="OTP verified. Please reset your password.",
+        )
+
+    # Default case for other OTP purposes like TWO_FACTOR_AUTH
     token_data = {"sub": current_user.email, "id": current_user.user_id}
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data=token_data)
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-    }
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+    )
+
+@router.post("/reset-password")
+async def reset_password(
+    password_data: PasswordReset,
+    current_user: User = Depends(get_current_user_from_reset_token),
+    db: Session = Depends(get_db),
+):
+    hashed_password = get_password_hash(password_data.new_password)
+    update_user_password(db, user_id=current_user.user_id, new_password=hashed_password)
+    return {"message": "Password has been reset successfully."}
 
 
 @router.post("/create", response_model=TempToken)
