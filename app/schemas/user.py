@@ -1,5 +1,5 @@
-
 from pydantic import BaseModel
+from datetime import datetime
 
 class UserBase(BaseModel):
     email: str
@@ -13,8 +13,10 @@ class UserLogin(BaseModel):
     password: str
 
 class User(UserBase):
-    id: int
+    user_id: str
     is_active: bool
+    total_xp: int
+    created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True

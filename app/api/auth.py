@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.crud import create_user, get_user_by_email, create_otp, get_otp_by_user_id, delete_otp
-from app.schemas import User, UserCreate, TempToken, UserLogin, OTPResponse, OTPVerify, Token
+from app.crud import create_user, get_user_by_email, create_otp, get_otp_by_user_id, set_otp_as_used, delete_otp
+from app.schemas import User, UserCreate, TempToken, UserLogin, Token, OtpRequest, OtpVerify
+from app.models.otp import OtpPurpose
 from app.utils import get_current_user, get_password_hash, get_db, get_current_user_from_temp_token
 from sqlalchemy.orm import Session
 from app.utils import (
@@ -27,7 +28,7 @@ async def login_user(user_login: UserLogin, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token_data = {"id": user.id, "token_type": "temp"}
+    token_data = {"id": user.user_id, "token_type": "temp"}
     temp_token = create_temp_token(data=token_data)
 
     return {
@@ -35,19 +36,20 @@ async def login_user(user_login: UserLogin, db: Session = Depends(get_db)):
         "message": "Login successful, please request an OTP.",
     }
 
-@router.post("/request-otp", response_model=OTPResponse)
+@router.post("/request-otp")
 async def request_otp(
+    otp_request: OtpRequest,
     current_user: User = Depends(get_current_user_from_temp_token),
     db: Session = Depends(get_db)
 ):
     otp_code = ''.join(random.choices(string.digits, k=6))
     hashed_otp = get_password_hash(otp_code)
 
-    existing_otp = get_otp_by_user_id(db, user_id=current_user.id)
+    existing_otp = get_otp_by_user_id(db, user_id=current_user.user_id, purpose=otp_request.purpose)
     if existing_otp:
         delete_otp(db, db_otp=existing_otp)
 
-    create_otp(db, user_id=current_user.id, otp_code=hashed_otp)
+    create_otp(db, user_id=current_user.user_id, code=hashed_otp, purpose=otp_request.purpose)
 
     send_otp_email(to_email=current_user.email, otp=otp_code)
 
@@ -55,25 +57,25 @@ async def request_otp(
 
 @router.post("/verify-otp", response_model=Token)
 async def verify_otp(
-    otp_data: OTPVerify,
+    otp_data: OtpVerify,
     current_user: User = Depends(get_current_user_from_temp_token),
     db: Session = Depends(get_db)
 ):
-    db_otp = get_otp_by_user_id(db, user_id=current_user.id)
+    db_otp = get_otp_by_user_id(db, user_id=current_user.user_id, purpose=otp_data.purpose)
 
-    if not db_otp:
+    if not db_otp or db_otp.is_used:
         raise HTTPException(status_code=400, detail="OTP not found or already used.")
 
-    if datetime.datetime.utcnow() > db_otp.expires_at:
+    if datetime.datetime.now(datetime.timezone.utc) > db_otp.expires_at:
         delete_otp(db, db_otp)
         raise HTTPException(status_code=400, detail="OTP has expired.")
 
-    if not verify_password(otp_data.otp, db_otp.otp_code):
+    if not verify_password(otp_data.code, db_otp.code):
         raise HTTPException(status_code=400, detail="Invalid OTP.")
 
-    delete_otp(db, db_otp)
+    set_otp_as_used(db, db_otp)
 
-    token_data = {"sub": current_user.email, "id": current_user.id}
+    token_data = {"sub": current_user.email, "id": current_user.user_id}
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data=token_data)
 
@@ -96,4 +98,3 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
 @router.get("/users/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
-3
