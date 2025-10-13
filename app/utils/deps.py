@@ -31,7 +31,7 @@ async def get_current_user(
         print("Token decryption failed:", str(e))
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise credentials_exception
 
@@ -59,7 +59,7 @@ async def get_current_user_from_temp_token(
         print("Temp token decryption failed:", str(e))
         raise credentials_exception
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise credentials_exception
 

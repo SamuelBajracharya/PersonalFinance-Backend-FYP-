@@ -1,5 +1,6 @@
 from .user import User, UserCreate, UserBase, UserLogin
-from .token import Token, TokenData, TempToken, OTPResponse, OTPVerify
+from .token import Token, TokenData, TempToken
+from .otp import Otp, OtpRequest, OtpVerify
 
 __all__ = [
     "User",
@@ -9,7 +10,8 @@ __all__ = [
     "UserBase",
     "UserLogin",
     "TempToken",
-    "OTPResponse",
-    "OTPVerify",
+    "Otp",
+    "OtpRequest",
+    "OtpVerify",
 ]
 

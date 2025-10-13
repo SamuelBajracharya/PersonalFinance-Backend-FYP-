@@ -1,6 +1,5 @@
-
 from .user import get_user_by_email, create_user
-from .otp import create_otp, get_otp_by_user_id, delete_otp
+from .otp import create_otp, get_otp_by_user_id, delete_otp, set_otp_as_used
 
 __all__ = [
     "get_user_by_email",
@@ -8,4 +7,5 @@ __all__ = [
     "create_otp",
     "get_otp_by_user_id",
     "delete_otp",
+    "set_otp_as_used",
 ]

@@ -13,9 +13,3 @@ class TokenData(BaseModel):
 class TempToken(BaseModel):
     temp_token: str
     message: str
-
-class OTPResponse(BaseModel):
-    message: str
-
-class OTPVerify(BaseModel):
-    otp: str
