@@ -15,6 +15,7 @@ class UserLogin(BaseModel):
 class User(UserBase):
     user_id: str
     is_active: bool
+    is_verified: bool
     total_xp: int
     created_at: datetime
 

@@ -7,7 +7,7 @@ from app.db import Base
 
 
 class OtpPurpose(str, enum.Enum):
-    EMAIL_VERIFICATION = "email_verification"
+    ACCOUNT_VERIFICATION = "account_verification"
     TWO_FACTOR_AUTH = "two_factor_auth"
     PASSWORD_RESET = "password_reset"
 
