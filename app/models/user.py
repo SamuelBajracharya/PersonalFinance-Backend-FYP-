@@ -11,5 +11,6 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)
     total_xp = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

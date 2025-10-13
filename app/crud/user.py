@@ -14,3 +14,11 @@ def create_user(db: Session, user: UserCreate):
     db.commit()
     db.refresh(db_user)
     return db_user
+
+def update_user_verified_status(db: Session, user_id: str, is_verified: bool):
+    db_user = get_user_by_id(db, user_id)
+    if db_user:
+        db_user.is_verified = is_verified
+        db.commit()
+        db.refresh(db_user)
+    return db_user

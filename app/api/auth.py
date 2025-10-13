@@ -1,5 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from app.crud import create_user, get_user_by_email, create_otp, get_otp_by_user_id, set_otp_as_used, delete_otp
+from app.crud import (
+    create_user,
+    get_user_by_email,
+    create_otp,
+    get_otp_by_user_id,
+    set_otp_as_used,
+    delete_otp,
+    update_user_verified_status,
+)
 from app.schemas import User, UserCreate, TempToken, UserLogin, Token, OtpRequest, OtpVerify
 from app.models.otp import OtpPurpose
 from app.utils import get_current_user, get_password_hash, get_db, get_current_user_from_temp_token
@@ -73,6 +81,9 @@ async def verify_otp(
     if not verify_password(otp_data.code, db_otp.code):
         raise HTTPException(status_code=400, detail="Invalid OTP.")
 
+    if otp_data.purpose == OtpPurpose.ACCOUNT_VERIFICATION:
+        update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)
+
     set_otp_as_used(db, db_otp)
 
     token_data = {"sub": current_user.email, "id": current_user.user_id}
@@ -86,13 +97,22 @@ async def verify_otp(
     }
 
 
-@router.post("/create", response_model=User)
+@router.post("/create", response_model=TempToken)
 async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+    
     user.password = get_password_hash(user.password)
-    return create_user(db=db, user=user)
+    new_user = create_user(db=db, user=user)
+
+    token_data = {"id": new_user.user_id, "token_type": "temp"}
+    temp_token = create_temp_token(data=token_data)
+
+    return {
+        "temp_token": temp_token,
+        "message": "User created. Please request an OTP to verify your account.",
+    }
 
 
 @router.get("/users/me", response_model=User)
