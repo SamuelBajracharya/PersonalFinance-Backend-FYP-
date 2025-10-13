@@ -13,3 +13,7 @@ class TokenData(BaseModel):
 class TempToken(BaseModel):
     temp_token: str
     message: str
+
+class ResetToken(BaseModel):
+    reset_token: str
+    message: str
