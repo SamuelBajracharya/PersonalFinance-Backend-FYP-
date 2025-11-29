@@ -1,5 +1,6 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, Integer, DateTime
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db import Base
 
@@ -14,3 +15,5 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     total_xp = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    bank_accounts = relationship("BankAccount", back_populates="user")

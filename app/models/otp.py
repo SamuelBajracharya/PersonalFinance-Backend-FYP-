@@ -17,7 +17,7 @@ class OTP(Base):
 
     otp_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
-    code = Column(String, nullable=False)  # actual OTP code
+    code = Column(String, nullable=False)  # OTP code
     purpose = Column(
         SAEnum(OtpPurpose, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,

@@ -1,6 +1,7 @@
 from .user import User, UserCreate, UserBase, UserLogin, PasswordResetRequest, PasswordReset
 from .token import Token, TokenData, TempToken, ResetToken
 from .otp import Otp, OtpRequest, OtpVerify
+from .bank import BankAccount, Transaction, TransactionCreate
 
 __all__ = [
     "User",
@@ -16,5 +17,7 @@ __all__ = [
     "PasswordResetRequest",
     "PasswordReset",
     "ResetToken",
+    "BankAccount",
+    "Transaction",
+    "TransactionCreate",
 ]
-
