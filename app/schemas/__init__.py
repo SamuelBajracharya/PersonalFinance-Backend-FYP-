@@ -2,6 +2,7 @@ from .user import User, UserCreate, UserBase, UserLogin, PasswordResetRequest, P
 from .token import Token, TokenData, TempToken, ResetToken
 from .otp import Otp, OtpRequest, OtpVerify
 from .bank import BankAccount, Transaction, TransactionCreate
+from .analytics import AnalyticsResponse, DataPoint, LineSeriesDataPoint, LineSeries, PieChartData
 
 __all__ = [
     "User",
@@ -20,4 +21,9 @@ __all__ = [
     "BankAccount",
     "Transaction",
     "TransactionCreate",
+    "AnalyticsResponse",
+    "DataPoint",
+    "LineSeriesDataPoint",
+    "LineSeries",
+    "PieChartData",
 ]

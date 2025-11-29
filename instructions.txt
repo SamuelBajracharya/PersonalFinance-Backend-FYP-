@@ -1,22 +1,26 @@
-You are an expert Backend Developer using FastAPI and SQLAlchemy.I have an existing project where the User model and authentication (JWE, refresh tokens) are ALREADY implemented and working. Do not modify the User model.I need you to generate a Python code snippet using SQLAlchemy that defines TWO new models: BankAccount and Transaction. These will link to the existing users table.Input Data (The Bank Schema)The data comes from this SQL structure. You must map these types to SQLAlchemy types (e.g., TIMESTAMPTZ -> DateTime(timezone=True), DECIMAL -> Numeric).Source SQL:CREATE TABLE Accounts (
-    account_id UUID PRIMARY KEY,         -- Map to: external_account_id
-    user_id UUID NOT NULL,               -- Map to: foreign key to users.id
-    bank_name TEXT NOT NULL,
-    account_number_masked TEXT NOT NULL,
-    account_type TEXT NOT NULL,
-    balance DECIMAL(12,2) NOT NULL
-);
+You are an expert Python Backend Developer using FastAPI, SQLAlchemy, and Pandas.I need you to write a single FastAPI endpoint that calculates financial analytics for a specific bank account.ContextI have a transactions table with these columns:amount (Decimal/Float)type (String: 'DEBIT' or 'CREDIT')date (DateTime)category (String)bank_account_id (Integer)The GoalCreate a GET endpoint: /api/analytics/{account_id}.It must fetch all transactions for that account, load them into a Pandas DataFrame, and calculate aggregations to return JSON that strictly matches the specific structure below.The Required JSON Output StructureThe frontend expects this EXACT format. Do not change key names."Transaction" data = Total Expenses (DEBIT)."Balance" data = Net Result (Income - Expense) or just Total Income (CREDIT) - choose what makes sense for a finance dashboard, but let's go with CREDIT (Income) for "BalanceData" to keep it positive and simple for the bar charts.{
+  "yearlyTransactionData": [ {"label": "2023", "value": 1000.0}, ... ],
+  "monthlyTransactionData": [ {"label": "Jan", "value": 500.0}, ... ],
+  "weeklyTransactionData": [ {"label": "Week 1", "value": 150.0}, ... ],
 
-CREATE TABLE Transactions (
-    transaction_id UUID PRIMARY KEY,     -- Map to: external_transaction_id
-    account_id UUID NOT NULL,            -- Map to: foreign key to bank_accounts.id
-    date TIMESTAMPTZ NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    currency VARCHAR(3) NOT NULL,
-    type VARCHAR(10) NOT NULL,
-    status VARCHAR(15) NOT NULL,
-    description TEXT,
-    merchant TEXT,
-    category TEXT
-);
-RequirementsExisting Context: Assume from .database import Base and from .auth import User (or similar) are available.Model 1: BankAccountTable name: bank_accountsColumns: id (Local PK), user_id (ForeignKey), external_account_id (Unique, stores the UUID from SQL), bank_name, account_number_masked, account_type, balance.Add a relationship back to User.Model 2: TransactionTable name: transactionsColumns: id (Local PK), user_id (ForeignKey), account_id (ForeignKey to bank_accounts, Nullable), external_transaction_id (Unique, stores UUID from SQL, Nullable).Crucial Field: source (String) -> Enum or String 'BANK'/'MANUAL'.Fields from SQL: amount, currency, type (DEBIT/CREDIT), status, description, merchant, category, date.Output: Just the Python class code for these two models.
+  "yearlyBalanceData": [ {"label": "2023", "value": 1200.0}, ... ],
+  "monthlyBalanceData": [ {"label": "Jan", "value": 600.0}, ... ],
+  "weeklyBalanceData": [ {"label": "Week 1", "value": 200.0}, ... ],
+
+  "yearlyLineSeries": [
+      { "id": "income", "data": [{"x": "2023", "y": 1200}] },
+      { "id": "expense", "data": [{"x": "2023", "y": 1000}] }
+  ],
+  "monthlyLineSeries": [
+      { "id": "income", "data": [{"x": "Jan", "y": 600}] },
+      { "id": "expense", "data": [{"x": "Jan", "y": 500}] }
+  ],
+  "weeklyLineSeries": [
+      { "id": "income", "data": [{"x": "Week 1", "y": 200}] },
+      { "id": "expense", "data": [{"x": "Week 1", "y": 150}] }
+  ],
+
+  "pieExpense": [ {"id": "Food", "label": "Food", "value": 500}, ... ],
+  "pieIncome": [ {"id": "Salary", "label": "Salary", "value": 2000}, ... ]
+}
+Logic RequirementsInput: account_id (str/int) provided in URL.Data Fetching: specific query to get all transactions for this account_id from the DB.Processing (Use Pandas):Convert date to datetime objects.Yearly: Group by Year.Monthly: Filter for the Current Year first, then Group by Month Name (Jan, Feb).Weekly: Filter for the Current Month first, then Group by Week Number (Label as "Week 1", "Week 2"...).Pie Charts:pieExpense: Top 5 categories where type='DEBIT'.pieIncome: Top 5 categories where type='CREDIT'.Output: Return the dictionary directly.Generate the full Python code for this endpoint, including the Pydantic Response Models.
