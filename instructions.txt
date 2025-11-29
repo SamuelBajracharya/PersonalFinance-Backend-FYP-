@@ -1,0 +1,22 @@
+You are an expert Backend Developer using FastAPI and SQLAlchemy.I have an existing project where the User model and authentication (JWE, refresh tokens) are ALREADY implemented and working. Do not modify the User model.I need you to generate a Python code snippet using SQLAlchemy that defines TWO new models: BankAccount and Transaction. These will link to the existing users table.Input Data (The Bank Schema)The data comes from this SQL structure. You must map these types to SQLAlchemy types (e.g., TIMESTAMPTZ -> DateTime(timezone=True), DECIMAL -> Numeric).Source SQL:CREATE TABLE Accounts (
+    account_id UUID PRIMARY KEY,         -- Map to: external_account_id
+    user_id UUID NOT NULL,               -- Map to: foreign key to users.id
+    bank_name TEXT NOT NULL,
+    account_number_masked TEXT NOT NULL,
+    account_type TEXT NOT NULL,
+    balance DECIMAL(12,2) NOT NULL
+);
+
+CREATE TABLE Transactions (
+    transaction_id UUID PRIMARY KEY,     -- Map to: external_transaction_id
+    account_id UUID NOT NULL,            -- Map to: foreign key to bank_accounts.id
+    date TIMESTAMPTZ NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    currency VARCHAR(3) NOT NULL,
+    type VARCHAR(10) NOT NULL,
+    status VARCHAR(15) NOT NULL,
+    description TEXT,
+    merchant TEXT,
+    category TEXT
+);
+RequirementsExisting Context: Assume from .database import Base and from .auth import User (or similar) are available.Model 1: BankAccountTable name: bank_accountsColumns: id (Local PK), user_id (ForeignKey), external_account_id (Unique, stores the UUID from SQL), bank_name, account_number_masked, account_type, balance.Add a relationship back to User.Model 2: TransactionTable name: transactionsColumns: id (Local PK), user_id (ForeignKey), account_id (ForeignKey to bank_accounts, Nullable), external_transaction_id (Unique, stores UUID from SQL, Nullable).Crucial Field: source (String) -> Enum or String 'BANK'/'MANUAL'.Fields from SQL: amount, currency, type (DEBIT/CREDIT), status, description, merchant, category, date.Output: Just the Python class code for these two models.

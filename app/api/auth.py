@@ -90,15 +90,23 @@ async def request_otp(
     otp_code = ''.join(random.choices(string.digits, k=6))
     hashed_otp = get_password_hash(otp_code)
 
+    # If existing OTP for same purpose, delete it first
     existing_otp = get_otp_by_user_id(db, user_id=current_user.user_id, purpose=otp_request.purpose)
     if existing_otp:
         delete_otp(db, db_otp=existing_otp)
 
+    # Create new OTP
     create_otp(db, user_id=current_user.user_id, code=hashed_otp, purpose=otp_request.purpose)
 
-    send_otp_email(to_email=current_user.email, otp=otp_code)
+    # 🧩 Pass purpose here
+    send_otp_email(
+        to_email=current_user.email,
+        otp=otp_code,
+        purpose=otp_request.purpose
+    )
 
-    return {"message": "OTP has been sent to your email."}
+    return {"message": f"OTP for '{otp_request.purpose}' has been sent to your email."}
+
 
 @router.post("/verify-otp")
 async def verify_otp(
