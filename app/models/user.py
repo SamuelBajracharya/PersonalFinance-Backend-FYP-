@@ -17,3 +17,4 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     bank_accounts = relationship("BankAccount", back_populates="user")
+    transactions = relationship("Transaction", back_populates="user")
