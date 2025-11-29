@@ -17,8 +17,7 @@ class BankAccount(Base):
     __tablename__ = "bank_accounts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    external_account_id = Column(String, unique=True, nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
     bank_name = Column(String, nullable=False)
     account_number_masked = Column(String, nullable=False)
     account_type = Column(String, nullable=False)
@@ -33,7 +32,7 @@ class Transaction(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     external_transaction_id = Column(String, unique=True, nullable=True)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
     account_id = Column(UUID(as_uuid=True), ForeignKey("bank_accounts.id"), nullable=True)
     source = Column(String, nullable=False)  # 'BANK' or 'MANUAL'
     date = Column(DateTime(timezone=True), nullable=False)
