@@ -12,3 +12,4 @@ alembic
 cryptography
 jwcrypto
 pydantic[email]
+httpx

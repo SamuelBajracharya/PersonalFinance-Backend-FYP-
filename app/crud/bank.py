@@ -7,10 +7,10 @@ from app.schemas.bank import TransactionCreate
 def get_bank_account(db: Session, bank_account_id: uuid.UUID):
     return db.query(BankAccount).filter(BankAccount.id == bank_account_id).first()
 
-def get_bank_accounts_by_user(db: Session, user_id: uuid.UUID):
+def get_bank_accounts_by_user(db: Session, user_id: str):
     return db.query(BankAccount).filter(BankAccount.user_id == user_id).all()
 
-def create_transaction(db: Session, transaction: TransactionCreate, user_id: uuid.UUID):
+def create_transaction(db: Session, transaction: TransactionCreate, user_id: str):
     db_transaction = Transaction(**transaction.model_dump(), user_id=user_id)
     db.add(db_transaction)
     db.commit()

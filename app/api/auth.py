@@ -20,6 +20,7 @@ from app.schemas import (
     PasswordResetRequest,
     ResetToken,
     PasswordReset,
+    RefreshTokenRequest,
 )
 from app.models.otp import OtpPurpose
 from app.utils.deps import (
@@ -27,6 +28,7 @@ from app.utils.deps import (
     get_db,
     get_current_user_from_temp_token,
     get_current_user_from_reset_token,
+    get_current_user_from_refresh_token,
 )
 from sqlalchemy.orm import Session
 from app.utils.auth import (
@@ -132,7 +134,7 @@ async def verify_otp(
         update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)
         token_data = {"sub": current_user.email, "id": current_user.user_id}
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(data=token_data)
+        refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
         return Token(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -150,7 +152,7 @@ async def verify_otp(
     # Default case for other OTP purposes like TWO_FACTOR_AUTH
     token_data = {"sub": current_user.email, "id": current_user.user_id}
     access_token = create_access_token(data=token_data)
-    refresh_token = create_refresh_token(data=token_data)
+    refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
 
     return Token(
         access_token=access_token,
@@ -185,6 +187,23 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
         "temp_token": temp_token,
         "message": "User created. Please request an OTP to verify your account.",
     }
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_token(
+    token_request: RefreshTokenRequest, db: Session = Depends(get_db)
+):
+    current_user = await get_current_user_from_refresh_token(
+        token=token_request.refresh_token, db=db
+    )
+    token_data = {"sub": current_user.email, "id": current_user.user_id}
+    access_token = create_access_token(data=token_data)
+    refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
 
 
 @router.get("/users/me", response_model=User)

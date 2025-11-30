@@ -1,5 +1,5 @@
 from .user import User, UserCreate, UserBase, UserLogin, PasswordResetRequest, PasswordReset
-from .token import Token, TokenData, TempToken, ResetToken
+from .token import Token, TokenData, TempToken, ResetToken, RefreshTokenRequest
 from .otp import Otp, OtpRequest, OtpVerify
 from .bank import BankAccount, Transaction, TransactionCreate
 from .analytics import AnalyticsResponse, DataPoint, LineSeriesDataPoint, LineSeries, PieChartData
@@ -18,6 +18,7 @@ __all__ = [
     "PasswordResetRequest",
     "PasswordReset",
     "ResetToken",
+    "RefreshTokenRequest",
     "BankAccount",
     "Transaction",
     "TransactionCreate",

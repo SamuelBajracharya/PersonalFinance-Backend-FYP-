@@ -93,3 +93,32 @@ async def get_current_user_from_reset_token(
         raise credentials_exception
 
     return user
+
+
+async def get_current_user_from_refresh_token(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = decrypt_token(token)
+        if payload.get("token_type") != "refresh":
+            raise credentials_exception
+        user_id = payload.get("id")
+        if not user_id:
+            raise credentials_exception
+
+    except Exception as e:
+        print("Refresh token decryption failed:", str(e))
+        raise credentials_exception
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        raise credentials_exception
+
+    return user

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import uuid
 from typing import List
@@ -6,6 +6,8 @@ from typing import List
 from app import crud, schemas
 from app.utils.deps import get_db, get_current_user
 from app.models.user import User
+from app.services.bank_sync import fetch_and_sync_bank_data
+
 
 router = APIRouter()
 
@@ -45,3 +47,18 @@ def read_account_transactions(
     if db_bank_account is None or db_bank_account.user_id != current_user.user_id:
         raise HTTPException(status_code=404, detail="Bank account not found")
     return crud.get_transactions_by_account(db=db, account_id=account_id)
+
+@router.post("/sync/{account_id}", status_code=status.HTTP_200_OK)
+async def sync_bank_data(
+    account_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    sync_summary = await fetch_and_sync_bank_data(
+        user_id=current_user.user_id,
+        target_account_id=account_id,
+        db=db
+    )
+    if sync_summary["status"] == "failed":
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=sync_summary["message"])
+    return sync_summary
