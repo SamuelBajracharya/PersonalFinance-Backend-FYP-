@@ -17,6 +17,7 @@ class BankAccount(Base):
     __tablename__ = "bank_accounts"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    external_account_id = Column(String, unique=True, nullable=False)
     user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
     bank_name = Column(String, nullable=False)
     account_number_masked = Column(String, nullable=False)

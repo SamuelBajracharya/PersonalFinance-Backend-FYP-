@@ -1,26 +1,28 @@
-You are an expert Python Backend Developer using FastAPI, SQLAlchemy, and Pandas.I need you to write a single FastAPI endpoint that calculates financial analytics for a specific bank account.ContextI have a transactions table with these columns:amount (Decimal/Float)type (String: 'DEBIT' or 'CREDIT')date (DateTime)category (String)bank_account_id (Integer)The GoalCreate a GET endpoint: /api/analytics/{account_id}.It must fetch all transactions for that account, load them into a Pandas DataFrame, and calculate aggregations to return JSON that strictly matches the specific structure below.The Required JSON Output StructureThe frontend expects this EXACT format. Do not change key names."Transaction" data = Total Expenses (DEBIT)."Balance" data = Net Result (Income - Expense) or just Total Income (CREDIT) - choose what makes sense for a finance dashboard, but let's go with CREDIT (Income) for "BalanceData" to keep it positive and simple for the bar charts.{
-  "yearlyTransactionData": [ {"label": "2023", "value": 1000.0}, ... ],
-  "monthlyTransactionData": [ {"label": "Jan", "value": 500.0}, ... ],
-  "weeklyTransactionData": [ {"label": "Week 1", "value": 150.0}, ... ],
-
-  "yearlyBalanceData": [ {"label": "2023", "value": 1200.0}, ... ],
-  "monthlyBalanceData": [ {"label": "Jan", "value": 600.0}, ... ],
-  "weeklyBalanceData": [ {"label": "Week 1", "value": 200.0}, ... ],
-
-  "yearlyLineSeries": [
-      { "id": "income", "data": [{"x": "2023", "y": 1200}] },
-      { "id": "expense", "data": [{"x": "2023", "y": 1000}] }
-  ],
-  "monthlyLineSeries": [
-      { "id": "income", "data": [{"x": "Jan", "y": 600}] },
-      { "id": "expense", "data": [{"x": "Jan", "y": 500}] }
-  ],
-  "weeklyLineSeries": [
-      { "id": "income", "data": [{"x": "Week 1", "y": 200}] },
-      { "id": "expense", "data": [{"x": "Week 1", "y": 150}] }
-  ],
-
-  "pieExpense": [ {"id": "Food", "label": "Food", "value": 500}, ... ],
-  "pieIncome": [ {"id": "Salary", "label": "Salary", "value": 2000}, ... ]
-}
-Logic RequirementsInput: account_id (str/int) provided in URL.Data Fetching: specific query to get all transactions for this account_id from the DB.Processing (Use Pandas):Convert date to datetime objects.Yearly: Group by Year.Monthly: Filter for the Current Year first, then Group by Month Name (Jan, Feb).Weekly: Filter for the Current Month first, then Group by Week Number (Label as "Week 1", "Week 2"...).Pie Charts:pieExpense: Top 5 categories where type='DEBIT'.pieIncome: Top 5 categories where type='CREDIT'.Output: Return the dictionary directly.Generate the full Python code for this endpoint, including the Pydantic Response Models.
+You are an expert Python Backend Developer using FastAPI, SQLAlchemy, and httpx.
+I need a robust asynchronous service function that syncs data from a specific external Bank API to my local database.
+External API Details
+Base URL: https://koshconnect-production.up.railway.app
+Endpoint 1 (Account Details): GET /accounts/{account_id}
+Response: {"account_id": "...", "bank_name": "...", "account_number_masked": "...", "account_type": "...", "balance": 1000.0}
+Endpoint 2 (Transactions): GET /accounts/{account_id}/transactions
+Response: [{"transaction_id": "...", "date": "...", "amount": 500, "type": "DEBIT", ...}, ...]
+Database Models (Already Existing)
+Assume these models exist in .models:
+BankAccount: Has external_account_id (unique), user_id, balance, etc.
+Transaction: Has external_transaction_id (unique), bank_account_id, source="BANK".
+The Task
+Write a Python file services/bank_sync.py with a single async function:
+async def fetch_and_sync_bank_data(user_id: int, target_account_id: str, db: Session):
+Logic Requirements
+Fetch Account: Call Endpoint 1.
+If the account does NOT exist in my local bank_accounts table, create it (linked to user_id).
+If it DOES exist, update the balance.
+Fetch Transactions: Call Endpoint 2.
+Loop through the results.
+Check if a transaction with this transaction_id already exists locally (in the external_transaction_id column).
+If it does NOT exist, insert it into the transactions table.
+Important: Map the external transaction_id to my local external_transaction_id column.
+Set source to "BANK".
+Error Handling: Wrap API calls in try/except blocks (handle network errors gracefully).
+Return: A dictionary with summary stats (e.g., {"new_transactions": 5, "status": "success"}).
+Generate only the Python code.
