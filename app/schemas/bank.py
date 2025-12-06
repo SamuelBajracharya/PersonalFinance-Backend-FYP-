@@ -34,10 +34,40 @@ class TransactionCreate(TransactionBase):
 
 
 class Transaction(TransactionBase):
+
+
     id: uuid.UUID
+
+
     user_id: uuid.UUID
+
+
     external_transaction_id: str | None = None
+
+
     account_id: uuid.UUID | None = None
 
+
+
+
+
     class Config:
+
+
         from_attributes = True
+
+
+
+
+
+
+
+
+class BankLoginRequest(BaseModel):
+
+
+    username: str
+
+
+    password: str
+

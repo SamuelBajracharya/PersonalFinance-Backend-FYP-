@@ -19,3 +19,6 @@ def create_transaction(db: Session, transaction: TransactionCreate, user_id: str
 
 def get_transactions_by_account(db: Session, account_id: uuid.UUID):
     return db.query(Transaction).filter(Transaction.account_id == account_id).all()
+
+def get_transactions_by_user(db: Session, user_id: str):
+    return db.query(Transaction).filter(Transaction.user_id == user_id).all()
