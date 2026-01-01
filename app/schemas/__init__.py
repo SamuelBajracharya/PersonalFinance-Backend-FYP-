@@ -3,6 +3,7 @@ from .token import Token, TokenData, TempToken, ResetToken, RefreshTokenRequest
 from .otp import Otp, OtpRequest, OtpVerify
 from .bank import BankAccount, Transaction, TransactionCreate
 from .analytics import AnalyticsResponse, DataPoint, LineSeriesDataPoint, LineSeries, PieChartData
+from .ai_advisor import AIAdvisorRequest, AIAdvisorResponse
 
 __all__ = [
     "User",
@@ -27,4 +28,6 @@ __all__ = [
     "LineSeriesDataPoint",
     "LineSeries",
     "PieChartData",
+    "AIAdvisorRequest",
+    "AIAdvisorResponse",
 ]

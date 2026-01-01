@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     SMTP_USER: str
     SMTP_PASSWORD: str
     SMTP_FROM_EMAIL: str
+    OLLAMA_API_URL: str = "http://localhost:11434/api/generate" # Default for local Ollama
 
     class Config:
         env_file = ".env"

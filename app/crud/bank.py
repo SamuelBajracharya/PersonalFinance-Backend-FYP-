@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 import uuid
+from datetime import datetime, timedelta
 
 from app.models.bank import BankAccount, Transaction
 from app.schemas.bank import TransactionCreate
@@ -22,3 +23,10 @@ def get_transactions_by_account(db: Session, account_id: uuid.UUID):
 
 def get_transactions_by_user(db: Session, user_id: str):
     return db.query(Transaction).filter(Transaction.user_id == user_id).all()
+
+def get_user_transactions_last_7_days(db: Session, user_id: str):
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    return db.query(Transaction).filter(
+        Transaction.user_id == user_id,
+        Transaction.date >= seven_days_ago
+    ).all()
