@@ -5,13 +5,24 @@ from app.schemas.ai_advisor import AIAdvisorResponse
 from app.config.settings import settings
 
 
+def is_greeting(text: str) -> bool:
+    greetings = [
+        "hi",
+        "hello",
+        "hey",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    ]
+    t = text.lower().strip()
+    return any(t.startswith(g) for g in greetings)
+
+
 async def generate_advice(
     db: Session, user_id: str, user_prompt: str
 ) -> AIAdvisorResponse:
-    """
-    Generates financial advice using Ollama based on the user's transactions
-    from the last 7 days.
-    """
+
     transactions = get_user_transactions_last_7_days(db, user_id)
 
     if not transactions:
@@ -24,10 +35,9 @@ async def generate_advice(
         spending_highlights = {}
         for t in transactions:
             if t.type == "DEBIT" and t.category:
-                if t.category in spending_highlights:
-                    spending_highlights[t.category] += t.amount
-                else:
-                    spending_highlights[t.category] = t.amount
+                spending_highlights[t.category] = (
+                    spending_highlights.get(t.category, 0) + t.amount
+                )
 
         overview = (
             f"Total Income: ${total_income:.2f}\n"
@@ -35,26 +45,66 @@ async def generate_advice(
             f"Savings Delta: ${savings_delta:.2f}\n"
             f"Spending Highlights (by category):\n"
         )
-        # Sort highlights by amount, descending
-        sorted_highlights = sorted(
-            spending_highlights.items(), key=lambda item: item[1], reverse=True
-        )
-        for category, amount in sorted_highlights:
+
+        for category, amount in sorted(
+            spending_highlights.items(), key=lambda x: x[1], reverse=True
+        ):
             overview += f"- {category}: ${amount:.2f}\n"
 
-    system_prompt = (
-        "You are a friendly and encouraging financial coach. Your goal is to provide simple, actionable, and easy-to-understand financial advice. "
-        "Do not use complex jargon. Always address the user directly using 'you' and 'your'.\n\n"
-        "Based on the user's financial overview and their question, please do the following:\n\n"
-        "1. **Rephrase the User's Question:** Restate their question to be more specific from your perspective as their advisor. Start this section with 'A better way to frame your question might be:'.\n\n"
-        "2. **Provide Financial Insight:** Give 3 to 5 concise, friendly, and practical bullet points as advice. Start this section with 'Here are a few friendly suggestions:'.\n\n"
-        "---BEGIN DATA---\n"
-        "User's financial overview (last 7 days):\n"
-        f"{overview}\n"
-        "Original User Question:\n"
-        f"{user_prompt}\n"
-        "---END DATA---"
-    )
+    # -------------------------------
+    # GREETING MODE
+    # -------------------------------
+    if is_greeting(user_prompt):
+        system_prompt = (
+            "You are a friendly financial assistant.\n"
+            "If the user is greeting you, reply with:\n\n"
+            "1) A short warm greeting\n"
+            "2) A single sentence letting them know you can help with financial questions\n\n"
+            "Do NOT provide financial advice in greeting replies.\n"
+            "Do NOT mention numbers or transactions.\n"
+            "Keep it simple and supportive.\n\n"
+            f"User message:\n{user_prompt}"
+        )
+
+    # -------------------------------
+    # ADVICE MODE (STRUCTURED OUTPUT)
+    # -------------------------------
+    else:
+        system_prompt = (
+            "You are a supportive financial coach.\n"
+            "Use the financial overview only as context.\n"
+            "Give direct, practical advice based on:\n"
+            "- the spending trends\n"
+            "- the user's question\n\n"
+            "STRICT OUTPUT FORMAT RULES:\n"
+            "Return your answer in a clean structured layout.\n"
+            "Follow this exact format:\n\n"
+            "1) <Short Heading>\n"
+            "• bullet point\n"
+            "• bullet point\n"
+            "• bullet point\n\n"
+            "---\n\n"
+            "2) <Short Heading>\n"
+            "• bullet point\n"
+            "• bullet point\n\n"
+            "---\n\n"
+            "3) <Short Heading>\n"
+            "• bullet point\n"
+            "• bullet point\n\n"
+            "Formatting rules:\n"
+            "- Keep bullets short and readable\n"
+            "- Each bullet must be on a new line\n"
+            "- Put a line separator `---` between sections\n"
+            "- Do NOT return long paragraphs\n"
+            "- Do NOT reframe the user's question\n"
+            "- Do NOT repeat the financial overview text\n\n"
+            "---BEGIN DATA---\n"
+            "Financial overview (7 days):\n"
+            f"{overview}\n\n"
+            "User question:\n"
+            f"{user_prompt}\n"
+            "---END DATA---"
+        )
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -70,11 +120,11 @@ async def generate_advice(
 
     raw_model_output = response.json().get("response", "")
 
-    # For now, we'll still return the raw output, but the prompt is structured
-    # to make it much cleaner and more user-friendly.
-    advice = raw_model_output
-    summary = overview
+    # preserve spacing for UI rendering
+    formatted_output = raw_model_output.strip()
 
     return AIAdvisorResponse(
-        summary=summary, advice=advice, raw_model_output=raw_model_output
+        summary=overview,
+        advice=formatted_output,
+        raw_model_output=raw_model_output,
     )
