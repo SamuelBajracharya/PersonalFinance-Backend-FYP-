@@ -18,3 +18,4 @@ class User(Base):
 
     bank_accounts = relationship("BankAccount", back_populates="user")
     transactions = relationship("Transaction", back_populates="user")
+    budgets = relationship("Budget", back_populates="user")

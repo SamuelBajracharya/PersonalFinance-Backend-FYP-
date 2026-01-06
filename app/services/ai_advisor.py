@@ -40,16 +40,16 @@ async def generate_advice(
                 )
 
         overview = (
-            f"Total Income: ${total_income:.2f}\n"
-            f"Total Expenses: ${total_expenses:.2f}\n"
-            f"Savings Delta: ${savings_delta:.2f}\n"
+            f"Total Income: NRs.{total_income:.2f}\n"
+            f"Total Expenses: NRs.{total_expenses:.2f}\n"
+            f"Savings Delta: NRs.{savings_delta:.2f}\n"
             f"Spending Highlights (by category):\n"
         )
 
         for category, amount in sorted(
             spending_highlights.items(), key=lambda x: x[1], reverse=True
         ):
-            overview += f"- {category}: ${amount:.2f}\n"
+            overview += f"- {category}: NRs.{amount:.2f}\n"
 
     # -------------------------------
     # GREETING MODE

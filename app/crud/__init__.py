@@ -6,6 +6,14 @@ from .bank import (
     create_transaction,
     get_transactions_by_account,
 )
+from .budget import (
+    create_budget,
+    get_budgets_by_user,
+    get_budget_by_id,
+    update_budget,
+    delete_budget,
+    get_budget_by_category_and_user_and_date,
+)
 
 __all__ = [
     "get_user_by_email",
@@ -20,4 +28,10 @@ __all__ = [
     "get_bank_accounts_by_user",
     "create_transaction",
     "get_transactions_by_account",
+    "create_budget",
+    "get_budgets_by_user",
+    "get_budget_by_id",
+    "update_budget",
+    "delete_budget",
+    "get_budget_by_category_and_user_and_date",
 ]
