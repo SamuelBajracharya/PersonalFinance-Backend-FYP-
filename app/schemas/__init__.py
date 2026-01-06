@@ -4,6 +4,7 @@ from .otp import Otp, OtpRequest, OtpVerify
 from .bank import BankAccount, Transaction, TransactionCreate
 from .analytics import AnalyticsResponse, DataPoint, LineSeriesDataPoint, LineSeries, PieChartData
 from .ai_advisor import AIAdvisorRequest, AIAdvisorResponse
+from .budget import Budget, BudgetCreate, BudgetUpdate
 
 __all__ = [
     "User",
@@ -30,4 +31,7 @@ __all__ = [
     "PieChartData",
     "AIAdvisorRequest",
     "AIAdvisorResponse",
+    "Budget",
+    "BudgetCreate",
+    "BudgetUpdate",
 ]
