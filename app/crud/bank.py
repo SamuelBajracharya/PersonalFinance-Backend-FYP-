@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import uuid
 from datetime import datetime, timedelta
 
@@ -30,3 +31,26 @@ def get_user_transactions_last_7_days(db: Session, user_id: str):
         Transaction.user_id == user_id,
         Transaction.date >= seven_days_ago
     ).all()
+
+def get_total_spending_for_category_and_month(
+    db: Session, user_id: str, category: str, year: int, month: int
+) -> float:
+    start_of_month = datetime(year, month, 1)
+    # Handle end of month for filtering
+    if month == 12:
+        end_of_month = datetime(year + 1, 1, 1) - timedelta(microseconds=1)
+    else:
+        end_of_month = datetime(year, month + 1, 1) - timedelta(microseconds=1)
+
+    total_spent = (
+        db.query(func.sum(Transaction.amount))
+        .filter(
+            Transaction.user_id == user_id,
+            Transaction.category == category,
+            Transaction.date >= start_of_month,
+            Transaction.date <= end_of_month,
+            Transaction.type == "DEBIT",  # Only consider debit transactions for spending
+        )
+        .scalar()
+    )
+    return total_spent if total_spent is not None else 0.0

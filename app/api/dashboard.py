@@ -10,6 +10,8 @@ from app.schemas.dashboard import (
     LineSeriesDataPoint,
 )
 from typing import List
+from app.services.reward_evaluation import evaluate_rewards
+from app.crud.budget import update_completed_budgets_for_user
 import pandas as pd
 from datetime import datetime
 import calendar
@@ -35,6 +37,10 @@ async def get_dashboard_data(
         raise HTTPException(
             status_code=404, detail="Bank account not found or not owned by user"
         )
+    
+    # Update completed budgets and evaluate rewards
+    update_completed_budgets_for_user(db=db, user_id=current_user.user_id)
+    evaluate_rewards(db=db, user=current_user)
 
     transactions = crud.get_transactions_by_account(
         db=db, account_id=db_bank_account.id
