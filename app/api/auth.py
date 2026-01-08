@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
+from app.crud.budget import update_completed_budgets_for_user
+from app.services.reward_evaluation import evaluate_rewards
 from app.crud import (
     create_user,
     get_user_by_email,
@@ -129,6 +131,10 @@ async def verify_otp(
         raise HTTPException(status_code=400, detail="Invalid OTP.")
 
     set_otp_as_used(db, db_otp)
+
+    # Update completed budgets and evaluate rewards
+    update_completed_budgets_for_user(db=db, user_id=current_user.user_id)
+    evaluate_rewards(db=db, user=current_user)
 
     if otp_data.purpose == OtpPurpose.ACCOUNT_VERIFICATION:
         update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)

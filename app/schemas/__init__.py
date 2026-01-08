@@ -5,6 +5,7 @@ from .bank import BankAccount, Transaction, TransactionCreate
 from .analytics import AnalyticsResponse, DataPoint, LineSeriesDataPoint, LineSeries, PieChartData
 from .ai_advisor import AIAdvisorRequest, AIAdvisorResponse
 from .budget import Budget, BudgetCreate, BudgetUpdate
+from .reward import Reward, RewardCreate, UserReward, UserRewardWithUnlockStatus, RewardType, UserRewardCreate
 
 __all__ = [
     "User",
@@ -34,4 +35,10 @@ __all__ = [
     "Budget",
     "BudgetCreate",
     "BudgetUpdate",
+    "Reward",
+    "RewardCreate",
+    "UserReward",
+    "UserRewardWithUnlockStatus",
+    "RewardType",
+    "UserRewardCreate",
 ]

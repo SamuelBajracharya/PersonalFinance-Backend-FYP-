@@ -6,6 +6,7 @@ from .dashboard import router as dashboard_router
 from .ai_advisor import router as ai_advisor_router
 from .budget import router as budget_router
 from .what_if_scenarios import router as what_if_scenarios_router
+from .rewards import router as rewards_router # Import the new rewards router
 
 api_router = APIRouter()
 
@@ -16,5 +17,6 @@ api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(ai_advisor_router, prefix="/ai", tags=["ai"])
 api_router.include_router(budget_router, prefix="/budgets", tags=["budgets"])
 api_router.include_router(what_if_scenarios_router, prefix="/what-if-scenarios", tags=["what-if-scenarios"])
+api_router.include_router(rewards_router, prefix="/rewards", tags=["rewards"]) # Include the new rewards router
 
 __all__ = ["api_router"]

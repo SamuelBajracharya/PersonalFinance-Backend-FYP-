@@ -5,6 +5,7 @@ from .bank import (
     get_bank_accounts_by_user,
     create_transaction,
     get_transactions_by_account,
+    get_total_spending_for_category_and_month,
 )
 from .budget import (
     create_budget,
@@ -13,6 +14,14 @@ from .budget import (
     update_budget,
     delete_budget,
     get_budget_by_category_and_user_and_date,
+    evaluate_budget_completion,
+)
+from .reward import (
+    get_reward_by_id,
+    get_all_rewards,
+    get_user_reward,
+    create_user_reward,
+    get_completed_budget_goals_count_for_user,
 )
 
 __all__ = [
@@ -28,10 +37,17 @@ __all__ = [
     "get_bank_accounts_by_user",
     "create_transaction",
     "get_transactions_by_account",
+    "get_total_spending_for_category_and_month",
     "create_budget",
     "get_budgets_by_user",
     "get_budget_by_id",
     "update_budget",
     "delete_budget",
     "get_budget_by_category_and_user_and_date",
+    "evaluate_budget_completion",
+    "get_reward_by_id",
+    "get_all_rewards",
+    "get_user_reward",
+    "create_user_reward",
+    "get_completed_budget_goals_count_for_user",
 ]
