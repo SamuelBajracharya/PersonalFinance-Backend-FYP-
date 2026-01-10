@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 import calendar
-from decimal import Decimal  
+from decimal import Decimal
 
 from app import crud, schemas
 from app.utils.deps import get_db, get_current_user
@@ -66,20 +66,27 @@ def get_financial_analytics(
         ]
     )
 
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_convert(timezone.utc)
     df["amount"] = df["amount"].astype(float)
 
-    now = datetime.now()
-    current_year = now.year
-    current_month = now.month
+    # Use timezone-aware UTC for all date operations
+    now = datetime.now(timezone.utc)
 
-    df_current_year = df[df["date"].dt.year == current_year]
-    df_current_month = df_current_year[
-        df_current_year["date"].dt.month == current_month
+    # Define the 12-month period
+    start_date = (now - pd.DateOffset(months=11)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    end_date = now
+
+    # Filter for the last 12 months and create a copy to avoid SettingWithCopyWarning
+    df_last_12_months = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
+
+    # Filter for the current month for weekly stats
+    df_current_month = df[
+        (df["date"].dt.year == now.year) & (df["date"].dt.month == now.month)
     ]
 
     # --- Helper Functions ---
     def format_data_for_chart(series):
+        # This function now expects a series with a pre-formatted string index
         return [
             schemas.DataPoint(label=str(label), value=round(Decimal(value), 2))
             for label, value in series.items()
@@ -88,34 +95,46 @@ def get_financial_analytics(
     def format_line_series_data(groups, prefix):
         income_points = []
         expense_points = []
-
         for label, group in groups:
             income = group[group["type"] == "CREDIT"]["amount"].sum()
             expense = group[group["type"] == "DEBIT"]["amount"].sum()
-
             income_points.append(
                 schemas.LineSeriesDataPoint(x=str(label), y=round(Decimal(income), 2))
             )
             expense_points.append(
                 schemas.LineSeriesDataPoint(x=str(label), y=round(Decimal(expense), 2))
             )
-
         return [
             schemas.LineSeries(id=f"{prefix}_income", data=income_points),
             schemas.LineSeries(id=f"{prefix}_expense", data=expense_points),
         ]
+
+    # --- Monthly Data Calculation ---
+    # Create a chronological list of all month labels for the last 12 months (e.g., 'Feb 2025', 'Mar 2025', ...)
+    all_months_labels = (
+        pd.date_range(start=start_date, end=end_date, freq="MS")
+        .strftime("%b %Y")
+        .tolist()
+    )
+
+    def process_monthly_data(series, labels):
+        # Reindex to include all 12 months, filling missing ones with 0
+        series = series.reindex(labels, fill_value=0)
+        return series
 
     # --- Transaction (Debit) Data ---
     yearly_transactions = (
         df[df["type"] == "DEBIT"].groupby(df["date"].dt.year)["amount"].sum()
     )
 
-    monthly_transactions = (
-        df_current_year[df_current_year["type"] == "DEBIT"]
-        .groupby(
-            df_current_year["date"].dt.month.apply(lambda x: calendar.month_abbr[x])
-        )["amount"]
+    # Group by 'Month YYYY' string format
+    monthly_transactions_series = (
+        df_last_12_months[df_last_12_months["type"] == "DEBIT"]
+        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
         .sum()
+    )
+    monthly_transactions = process_monthly_data(
+        monthly_transactions_series, all_months_labels
     )
 
     weekly_transactions = (
@@ -129,13 +148,12 @@ def get_financial_analytics(
         df[df["type"] == "CREDIT"].groupby(df["date"].dt.year)["amount"].sum()
     )
 
-    monthly_balance = (
-        df_current_year[df_current_year["type"] == "CREDIT"]
-        .groupby(
-            df_current_year["date"].dt.month.apply(lambda x: calendar.month_abbr[x])
-        )["amount"]
+    monthly_balance_series = (
+        df_last_12_months[df_last_12_months["type"] == "CREDIT"]
+        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
         .sum()
     )
+    monthly_balance = process_monthly_data(monthly_balance_series, all_months_labels)
 
     weekly_balance = (
         df_current_month[df_current_month["type"] == "CREDIT"]
@@ -145,12 +163,36 @@ def get_financial_analytics(
 
     # --- Line Series ---
     yearlyLineSeries = format_line_series_data(df.groupby(df["date"].dt.year), "yearly")
-    monthlyLineSeries = format_line_series_data(
-        df_current_year.groupby(
-            df_current_year["date"].dt.month.apply(lambda x: calendar.month_abbr[x])
-        ),
-        "monthly",
+
+    # Monthly Line Series
+    monthly_income_series = (
+        df_last_12_months[df_last_12_months["type"] == "CREDIT"]
+        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
+        .sum()
     )
+    monthly_income = process_monthly_data(monthly_income_series, all_months_labels)
+
+    monthly_expense_series = (
+        df_last_12_months[df_last_12_months["type"] == "DEBIT"]
+        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
+        .sum()
+    )
+    monthly_expense = process_monthly_data(monthly_expense_series, all_months_labels)
+
+    income_points = [
+        schemas.LineSeriesDataPoint(x=str(label), y=round(Decimal(value), 2))
+        for label, value in monthly_income.items()
+    ]
+    expense_points = [
+        schemas.LineSeriesDataPoint(x=str(label), y=round(Decimal(value), 2))
+        for label, value in monthly_expense.items()
+    ]
+
+    monthlyLineSeries = [
+        schemas.LineSeries(id="monthly_income", data=income_points),
+        schemas.LineSeries(id="monthly_expense", data=expense_points),
+    ]
+
     weeklyLineSeries = format_line_series_data(
         df_current_month.groupby(df_current_month["date"].dt.isocalendar().week),
         "weekly",
