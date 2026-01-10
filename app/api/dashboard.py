@@ -13,10 +13,13 @@ from typing import List
 from app.services.reward_evaluation import evaluate_rewards
 from app.crud.budget import update_completed_budgets_for_user
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 import calendar
 from decimal import Decimal
 from app import crud
+
+import pytz # Import pytz for timezone handling
 
 router = APIRouter()
 
@@ -83,15 +86,15 @@ async def get_dashboard_data(
         totalBalance=f"{total_balance:.2f}",
     )
 
+    # Determine timezone of dataframe dates if any, and apply to 'now'
     now = datetime.now()
-    current_year = now.year
-    current_month = now.month
+    if not df.empty and df["date"].dt.tz is not None:
+        local_tz = df["date"].dt.tz
+        now = now.astimezone(local_tz) # Make 'now' timezone-aware
 
-    df_current_year = df[df["date"].dt.year == current_year]
-    df_current_month = df_current_year[
-        df_current_year["date"].dt.month == current_month
-    ]
-
+    twelve_months_ago = now - relativedelta(months=11)
+    df_last_12_months = df[df["date"] >= twelve_months_ago]
+    
     def format_line_series_data(groups, prefix):
         income_points = []
         expense_points = []
@@ -109,43 +112,73 @@ async def get_dashboard_data(
         ]
 
     # --------------------------
-    # YEARLY LINE SERIES
+    # YEARLY LINE SERIES (YEAR-OVER-YEAR)
     # --------------------------
     yearly_groups = df.groupby(df["date"].dt.year)
     yearly_line_series = format_line_series_data(yearly_groups, "yearly")
 
     # --------------------------
-    # MONTHLY LINE SERIES
+    # MONTHLY LINE SERIES (LAST 12 MONTHS)
     # --------------------------
-    monthly_groups = df_current_year.groupby(df_current_year["date"].dt.month)
-    monthly_line_series = format_line_series_data(monthly_groups, "monthly")
+    monthly_line_series = []
+    if not df_last_12_months.empty:
+        df_last_12_months = df_last_12_months.copy()
+        df_last_12_months["month_year"] = df_last_12_months["date"].dt.to_period("M")
+        
+        date_range = pd.date_range(start=twelve_months_ago, end=now, freq='MS').to_period('M')
+        
+        monthly_income = df_last_12_months[df_last_12_months['type'] == 'CREDIT'].groupby('month_year')['amount'].sum().reindex(date_range, fill_value=0)
+        monthly_expenses = df_last_12_months[df_last_12_months['type'] == 'DEBIT'].groupby('month_year')['amount'].sum().reindex(date_range, fill_value=0)
 
-    # Convert month numbers → "Jan", "Feb", etc.
-    for series in monthly_line_series:
-        for point in series.data:
-            point.x = calendar.month_abbr[int(point.x)]
+        income_points = []
+        expense_points = []
+        for period in date_range:
+            month_abbr = period.strftime('%b')
+            income = monthly_income.get(period, 0)
+            expense = monthly_expenses.get(period, 0)
+            income_points.append(LineSeriesDataPoint(x=month_abbr, y=f"{income:.2f}"))
+            expense_points.append(LineSeriesDataPoint(x=month_abbr, y=f"{expense:.2f}"))
+
+        monthly_line_series = [
+            LineSeries(id="monthly_income", data=income_points),
+            LineSeries(id="monthly_expense", data=expense_points),
+        ]
+    else:
+        empty_series = LineSeries(id="", data=[])
+        monthly_line_series = [empty_series, empty_series]
 
     # --------------------------
-    # WEEKLY LINE SERIES (FIXED TO 4 WEEKS)
+    # WEEKLY LINE SERIES (CURRENT WEEK)
     # --------------------------
+    start_of_week = now - timedelta(days=now.weekday())
+    end_of_week = start_of_week + timedelta(days=6)
+    df_current_week = df[(df['date'] >= start_of_week) & (df['date'] <= end_of_week)]
 
-    # Create week-of-month (1–4)
-    if not df_current_month.empty:
-        df_current_month = df_current_month.copy()
-        df_current_month["week_of_month"] = (
-            df_current_month["date"].dt.day - 1
-        ) // 7 + 1
+    weekly_line_series = []
+    if not df_current_week.empty:
+        df_current_week = df_current_week.copy()
+        df_current_week['day_of_week'] = df_current_week['date'].dt.day_name()
+        
+        daily_groups = df_current_week.groupby('day_of_week')
+        weekly_line_series = format_line_series_data(daily_groups, "weekly")
 
-        weekly_groups = df_current_month.groupby("week_of_month")
-        weekly_line_series = format_line_series_data(weekly_groups, "weekly")
-
-        # Convert 1 → Week 1, etc.
+        # Ensure all days of the week are present
+        days_of_week = list(calendar.day_name)
+        existing_days = {p.x for s in weekly_line_series for p in s.data}
+        for day in days_of_week:
+            if day not in existing_days:
+                for series in weekly_line_series:
+                    series.data.append(LineSeriesDataPoint(x=day, y="0.00"))
+        
+        # Sort data by day of the week
+        day_order = {day: i for i, day in enumerate(calendar.day_name)}
         for series in weekly_line_series:
-            for point in series.data:
-                point.x = f"Week {point.x}"
+            series.data.sort(key=lambda p: day_order[p.x])
+
     else:
         empty_series = LineSeries(id="", data=[])
         weekly_line_series = [empty_series, empty_series]
+
 
     return DashboardResponse(
         summary=summary_data,
