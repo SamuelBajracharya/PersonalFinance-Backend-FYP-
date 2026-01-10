@@ -16,12 +16,14 @@ def _unlock_reward(db: Session, user: User, reward: Reward):
     db.refresh(user_reward)
     print(f"User {user.user_id} unlocked reward: {reward.name} Tier {reward.tier}")
 
-def evaluate_rewards(db: Session, user: User):
+def evaluate_rewards(db: Session, user: User) -> list[Reward]:
     """
     Evaluates all potential rewards for a user and unlocks them if conditions are met.
+    Returns a list of newly unlocked Reward objects.
     """
     all_rewards = db.query(Reward).all()
     unlocked_reward_ids = {ur.reward_id for ur in user.unlocked_rewards}
+    newly_unlocked_rewards: list[Reward] = []
 
     # Get user stats
     user_xp = user.total_xp if user.total_xp is not None else 0
@@ -42,3 +44,6 @@ def evaluate_rewards(db: Session, user: User):
         
         if unlocked:
             _unlock_reward(db, user, reward)
+            newly_unlocked_rewards.append(reward)
+    
+    return newly_unlocked_rewards

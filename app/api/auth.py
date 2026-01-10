@@ -23,6 +23,7 @@ from app.schemas import (
     ResetToken,
     PasswordReset,
     RefreshTokenRequest,
+    TokenWithRewards, # Import TokenWithRewards
 )
 from app.models.otp import OtpPurpose
 from app.utils.deps import (
@@ -195,7 +196,7 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/refresh", response_model=Token)
+@router.post("/refresh", response_model=TokenWithRewards) # Change response_model
 async def refresh_token(
     token_request: RefreshTokenRequest, db: Session = Depends(get_db)
 ):
@@ -205,10 +206,12 @@ async def refresh_token(
     token_data = {"sub": current_user.email, "id": current_user.user_id}
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
-    return Token(
+    new_rewards = evaluate_rewards(db=db, user=current_user) # Capture new rewards
+    return TokenWithRewards( # Use TokenWithRewards
         access_token=access_token,
         refresh_token=refresh_token,
-        token_type="bearer"
+        token_type="bearer",
+        new_rewards=new_rewards # Include new rewards
     )
 
 
