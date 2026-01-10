@@ -23,6 +23,9 @@ class User(UserBase):
     is_active: bool
     is_verified: bool
     total_xp: int
+    savings: int
+    goals_completed: int
+    rank: str
     created_at: datetime
 
     class Config:

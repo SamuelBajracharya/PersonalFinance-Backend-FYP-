@@ -115,3 +115,8 @@ def update_completed_budgets_for_user(db: Session, user_id: str):
     db.commit()
     db.refresh(user)
 
+    # Re-evaluate all rewards for the user after budget updates
+    from app.services.reward_evaluation import evaluate_rewards
+    new_rewards = evaluate_rewards(db, user)
+    return new_rewards
+

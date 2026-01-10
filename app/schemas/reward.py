@@ -38,3 +38,10 @@ class UserReward(UserRewardBase):
 class UserRewardWithUnlockStatus(Reward):
     unlocked: bool = False
     unlocked_at: Optional[datetime] = None
+
+
+class RecentReward(BaseModel):
+    reward_id: str
+    name: str
+    xp_gained: int
+    unlocked_at: datetime

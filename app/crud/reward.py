@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models import Reward, UserReward, User
 from app.schemas import RewardCreate, UserRewardCreate
 from typing import List, Optional
@@ -50,3 +50,16 @@ def get_completed_budget_goals_count_for_user(db: Session, user_id: str) -> int:
                 completed_goals_count += 1
                 
     return completed_goals_count
+
+def get_user_recent_rewards(db: Session, user_id: str, limit: int = 5) -> List[UserReward]:
+    """
+    Fetches the most recent rewards for a user.
+    """
+    return (
+        db.query(UserReward)
+        .options(joinedload(UserReward.reward))
+        .filter(UserReward.user_id == user_id)
+        .order_by(UserReward.unlocked_at.desc())
+        .limit(limit)
+        .all()
+    )
