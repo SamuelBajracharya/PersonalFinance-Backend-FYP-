@@ -3,9 +3,12 @@ from .otp import create_otp, get_otp_by_user_id, delete_otp, set_otp_as_used
 from .bank import (
     get_bank_account,
     get_bank_accounts_by_user,
+    get_bank_account_by_user_and_bank_name,
     create_transaction,
     get_transactions_by_account,
     get_total_spending_for_category_and_month,
+    deactivate_bank_accounts_by_user,
+    delete_transactions_by_user,
 )
 from .budget import (
     create_budget,
@@ -35,9 +38,12 @@ __all__ = [
     "update_user_password",
     "get_bank_account",
     "get_bank_accounts_by_user",
+    "get_bank_account_by_user_and_bank_name",
     "create_transaction",
     "get_transactions_by_account",
     "get_total_spending_for_category_and_month",
+    "deactivate_bank_accounts_by_user",
+    "delete_transactions_by_user",
     "create_budget",
     "get_budgets_by_user",
     "get_budget_by_id",

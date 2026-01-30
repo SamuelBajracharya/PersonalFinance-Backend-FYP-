@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     Enum as SQLAlchemyEnum,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -23,6 +24,7 @@ class BankAccount(Base):
     account_number_masked = Column(String, nullable=False)
     account_type = Column(String, nullable=False)
     balance = Column(Numeric(12, 2), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
 
     user = relationship("User", back_populates="bank_accounts")
     transactions = relationship("Transaction", back_populates="account")

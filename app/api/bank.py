@@ -41,24 +41,37 @@ async def login_to_bank_and_sync(
     return sync_summary
 
 
+@router.post("/unlink", status_code=status.HTTP_200_OK)
+def unlink_bank_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Unlinks all bank accounts for the current user by deactivating them.
+    Transaction data is preserved, but the accounts will no longer be synced.
+    """
+    crud.deactivate_bank_accounts_by_user(db=db, user_id=current_user.user_id)
+    return {"message": "All bank accounts have been unlinked successfully."}
+
+
+@router.delete("/delete-data", status_code=status.HTTP_200_OK)
+def delete_user_transaction_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Deletes all transaction data for the current user.
+    """
+    crud.delete_transactions_by_user(db=db, user_id=current_user.user_id)
+    return {"message": "All transaction data has been deleted successfully."}
+
+
 @router.get("/accounts", response_model=List[schemas.BankAccount])
 def read_bank_accounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     return crud.get_bank_accounts_by_user(db=db, user_id=current_user.user_id)
-
-
-@router.get("/accounts/{account_id}", response_model=schemas.BankAccount)
-def read_bank_account(
-    account_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    db_bank_account = crud.get_bank_account(db=db, bank_account_id=account_id)
-    if db_bank_account is None or db_bank_account.user_id != current_user.user_id:
-        raise HTTPException(status_code=404, detail="Bank account not found")
-    return db_bank_account
 
 
 @router.post("/transactions", response_model=schemas.Transaction)
@@ -71,18 +84,36 @@ def create_transaction(
     db_account = crud.get_bank_account(db, transaction.account_id)
     if not db_account or db_account.user_id != current_user.user_id:
         raise HTTPException(status_code=403, detail="Unauthorized for this account")
-    return crud.create_transaction(db=db, transaction_data=transaction.dict())
+    return crud.create_transaction(
+        db=db, transaction_data=transaction.dict(), user_id=current_user.user_id
+    )
 
 
-@router.get(
-    "/accounts/{account_id}/transactions", response_model=List[schemas.Transaction]
-)
-def read_account_transactions(
-    account_id: str,
+@router.get("/accounts/nabil", response_model=schemas.BankAccount)
+def read_bank_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_bank_account = crud.get_bank_account(db=db, bank_account_id=account_id)
-    if db_bank_account is None or db_bank_account.user_id != current_user.user_id:
-        raise HTTPException(status_code=404, detail="Bank account not found")
-    return crud.get_transactions_by_account(db=db, account_id=account_id)
+    db_bank_account = crud.get_bank_account_by_user_and_bank_name(
+        db=db, user_id=current_user.user_id, bank_name="Nabil Bank"
+    )
+    if db_bank_account is None:
+        raise HTTPException(
+            status_code=404, detail="Nabil Bank account not found for the user"
+        )
+    return db_bank_account
+
+
+@router.get("/accounts/nabil/transactions", response_model=List[schemas.Transaction])
+def read_account_transactions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db_nabil_account = crud.get_bank_account_by_user_and_bank_name(
+        db=db, user_id=current_user.user_id, bank_name="Nabil Bank"
+    )
+    if db_nabil_account is None:
+        raise HTTPException(
+            status_code=404, detail="Nabil Bank account not found for the user"
+        )
+    return crud.get_transactions_by_account(db=db, account_id=db_nabil_account.id)
