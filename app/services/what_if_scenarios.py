@@ -5,6 +5,9 @@ from app.models.bank import Transaction
 from app.models.user import User
 from app.schemas.what_if_scenarios import WhatIfScenario
 
+from app.crud.bank import get_monthly_spending_history
+
+
 def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     """
     Analyzes a user's current month expenses and generates savings scenarios
@@ -35,41 +38,48 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     if not expenses_by_category:
         return []
 
-    # 3. Select the top 5 categories
+    # Select the top 5 categories
     top_5_categories = expenses_by_category[:5]
 
-    # 4. Define smart percentage assignment rules
+    # Define smart percentage assignment rules (Category Caps)
     category_percentage_map = {
-        # Basic necessities: 20%
-        "food": 20,
-        "groceries": 20,
-        "rent": 20,
-        "utilities": 20,
-        "transport": 30,
-        "internet": 30,
-        "subscriptions": 30,
-        # Discretionary: 40%
-        "entertainment": 40,
-        "dining out": 40,
-        "shopping": 40,
+        # Basic necessities
+        "food": 20, "groceries": 20, "rent": 10, "utilities": 10,
+        "transport": 30, "internet": 30, "subscriptions": 50,
+        # Discretionary
+        "entertainment": 50, "dining out": 40, "shopping": 50,
     }
 
     scenarios = []
     for category, total_spent in top_5_categories:
-        # 5. Assign reduction percentage
-        reduction_percentage = 40  # Default to 40% for uncategorized
+        # Use historical spending to determine a realistic reduction rate.
+        history = get_monthly_spending_history(db, user.user_id, category)
+        historical_reduction_rate = 0
+        if history["avg_spend"] > 0:
+            historical_reduction_rate = (history["avg_spend"] - history["min_spend"]) / history["avg_spend"]
+
+        # If user's spending is already at its minimum, don't suggest a cut.
+        if historical_reduction_rate <= 0:
+            continue
+
+        # Get the category-based cap
+        category_cap = 40  # Default cap
         for cat_keyword, percentage in category_percentage_map.items():
             if cat_keyword in category.lower():
-                reduction_percentage = percentage
+                category_cap = percentage
                 break
         
-        # 6. Calculate savings
-        monthly_savings = round(float(total_spent * reduction_percentage) / 100, 2)
+        # The final percentage is capped by the lower of the historical rate and the category cap.
+        effective_reduction_percentage = min(historical_reduction_rate * 100, category_cap)
+        
+
+        # Calculate savings based on the effective rate
+        monthly_savings = round(float(total_spent * effective_reduction_percentage) / 100, 2)
         new_budget = round(float(total_spent) - monthly_savings, 2)
 
-        # 7. Format the message
+        # Format the message
         message = (
-            f"If you cut {reduction_percentage}% from {category} "
+            f"If you cut {int(effective_reduction_percentage)}% from {category} "
             f"you could save Rs{int(monthly_savings)}/month!"
         )
 
@@ -77,7 +87,7 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
             WhatIfScenario(
                 category=category,
                 total_spent=round(float(total_spent), 2),
-                reduction_percentage=reduction_percentage,
+                reduction_percentage=int(effective_reduction_percentage),
                 monthly_savings=monthly_savings,
                 new_budget=new_budget,
                 message=message,
@@ -85,3 +95,4 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
         )
 
     return scenarios
+
