@@ -27,6 +27,7 @@ class Budget(Base):
     user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
     category = Column(String, nullable=False)
     budget_amount = Column(Numeric(10, 2), nullable=False)
+    remaining_budget = Column(Numeric(10, 2), nullable=True)
     start_date = Column(Date, nullable=False, default=get_default_start_date)
     end_date = Column(Date, nullable=False, default=get_default_end_date)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
