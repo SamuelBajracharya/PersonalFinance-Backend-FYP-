@@ -1,3 +1,4 @@
+# FastAPI and Backend Dependencies
 fastapi
 uvicorn
 pydantic-settings
@@ -13,3 +14,11 @@ cryptography
 jwcrypto
 pydantic[email]
 httpx
+
+# AI Model Dependencies
+tensorflow
+scikit-learn
+xgboost
+joblib
+pandas
+numpy

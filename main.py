@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.db import Base, engine
+import app.models # Import all models to register them with Base.metadata
 
 # Create database tables
 Base.metadata.create_all(bind=engine)

@@ -2,7 +2,7 @@ import uuid
 from sqlalchemy import Column, String, Boolean, Integer, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from app.db import Base
+from app.db.base import Base
 
 
 class User(Base):
@@ -23,6 +23,7 @@ class User(Base):
     transactions = relationship("Transaction", back_populates="user")
     budgets = relationship("Budget", back_populates="user")
     unlocked_rewards = relationship("UserReward", back_populates="user")
+    predictions = relationship("DailyPrediction", back_populates="user")
 
     @property
     def rank(self):

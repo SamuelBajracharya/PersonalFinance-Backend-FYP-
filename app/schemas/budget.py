@@ -2,6 +2,7 @@
 from pydantic import BaseModel, Field
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Optional
 
 class BudgetBase(BaseModel):
     category: str
@@ -20,6 +21,7 @@ class Budget(BudgetBase):
     user_id: str
     start_date: date
     end_date: date
+    remaining_budget: Optional[Decimal] = None
 
     class Config:
         from_attributes = True

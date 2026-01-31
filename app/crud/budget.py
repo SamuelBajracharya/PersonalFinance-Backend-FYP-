@@ -1,4 +1,3 @@
-
 from sqlalchemy.orm import Session
 from app.models.budget import Budget
 from app.schemas.budget import BudgetCreate, BudgetUpdate
@@ -6,21 +5,59 @@ from datetime import date
 from fastapi import HTTPException
 from app.crud.bank import get_total_spending_for_category_and_month
 from app.models.user import User
+from decimal import Decimal
+
+
+def _update_remaining_budget(db: Session, budget: Budget):
+    """
+    Calculates and updates the remaining_budget for a given budget based on actual spending.
+    """
+    current_spending = get_total_spending_for_category_and_month(
+        db,
+        budget.user_id,
+        budget.category,
+        budget.start_date.year,
+        budget.start_date.month
+    )
+    # Ensure current_spending is a Decimal for consistent arithmetic
+    current_spending_decimal = Decimal(current_spending) if current_spending is not None else Decimal(0)
+    
+    budget.remaining_budget = budget.budget_amount - current_spending_decimal
+    db.add(budget)
+    db.commit()
+    db.refresh(budget)
+    return budget
 
 
 def get_budgets_by_user(db: Session, user_id: str):
-    return db.query(Budget).filter(Budget.user_id == user_id).all()
+    budgets = db.query(Budget).filter(Budget.user_id == user_id).all()
+    # Update remaining_budget for each budget before returning
+    updated_budgets = []
+    for budget in budgets:
+        updated_budgets.append(_update_remaining_budget(db, budget))
+    return updated_budgets
+
 
 def get_budget_by_id(db: Session, budget_id: str, user_id: str):
-    return db.query(Budget).filter(Budget.id == budget_id, Budget.user_id == user_id).first()
+    budget = db.query(Budget).filter(Budget.id == budget_id, Budget.user_id == user_id).first()
+    if budget:
+        # Update remaining_budget before returning a single budget
+        budget = _update_remaining_budget(db, budget)
+    return budget
+
 
 def get_budget_by_category_and_user_and_date(db: Session, user_id: str, category: str, start_date: date, end_date: date):
-    return db.query(Budget).filter(
+    budget = db.query(Budget).filter(
         Budget.user_id == user_id,
         Budget.category == category,
         Budget.start_date <= end_date,
         Budget.end_date >= start_date
     ).first()
+    if budget:
+        # Update remaining_budget before returning
+        budget = _update_remaining_budget(db, budget)
+    return budget
+
 
 def create_budget(db: Session, budget: BudgetCreate, user_id: str):
     # Enforce budget creation rule
@@ -39,18 +76,22 @@ def create_budget(db: Session, budget: BudgetCreate, user_id: str):
         )
 
     db_budget = Budget(**budget.dict(), user_id=user_id)
+    # Initialize remaining_budget upon creation
+    db_budget.remaining_budget = budget.budget_amount
     db.add(db_budget)
     db.commit()
     db.refresh(db_budget)
     return db_budget
 
+
 def update_budget(db: Session, budget_id: str, budget: BudgetUpdate, user_id: str):
     db_budget = get_budget_by_id(db, budget_id=budget_id, user_id=user_id)
     if db_budget:
         db_budget.budget_amount = budget.budget_amount
-        db.commit()
-        db.refresh(db_budget)
+        # Re-calculate remaining budget if budget_amount is updated
+        _update_remaining_budget(db, db_budget)
     return db_budget
+
 
 def delete_budget(db: Session, budget_id: str, user_id: str):
     db_budget = get_budget_by_id(db, budget_id=budget_id, user_id=user_id)
@@ -119,4 +160,3 @@ def update_completed_budgets_for_user(db: Session, user_id: str):
     from app.services.reward_evaluation import evaluate_rewards
     new_rewards = evaluate_rewards(db, user)
     return new_rewards
-
