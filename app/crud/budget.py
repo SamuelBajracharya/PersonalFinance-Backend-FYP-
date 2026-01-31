@@ -113,14 +113,17 @@ def evaluate_budget_completion(db: Session, budget: Budget, user: User) -> bool:
         budget.start_date.month
     )
 
-    if total_spending <= budget.budget_amount:
+    # Convert total_spending to Decimal for consistent arithmetic
+    total_spending_decimal = Decimal(str(total_spending))
+
+    if total_spending_decimal <= budget.budget_amount:
         # Budget goal successful
         # Grant XP (e.g., 100 XP per successful goal)
         user.total_xp += 100 
         
         # Calculate and persist savings
-        if budget.budget_amount > total_spending:
-            savings = budget.budget_amount - total_spending
+        if budget.budget_amount > total_spending_decimal: # Use total_spending_decimal here
+            savings = budget.budget_amount - total_spending_decimal # Use total_spending_decimal here
             user.savings += int(savings) # Ensure savings are integers
             print(f"User {user.user_id} saved Rs {savings:.2f} for budget {budget.id}")
         
