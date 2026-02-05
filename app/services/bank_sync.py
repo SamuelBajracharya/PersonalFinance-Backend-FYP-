@@ -7,8 +7,10 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+
 from app.models.bank import BankAccount, Transaction
 from app.models.user import User
+from app.services.event_logger import log_event_async
 
 EXTERNAL_BANK_API_BASE_URL = "https://koshconnect.onrender.com"
 
@@ -39,15 +41,21 @@ async def login_and_sync_all_accounts(
                 login_response.raise_for_status()
                 login_data = login_response.json()
             except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error during KoshConnect login: {e.response.status_code} - {e.response.text}")
-                summary["message"] = f"KoshConnect login failed: {e.response.status_code}"
+                logger.error(
+                    f"HTTP error during KoshConnect login: {e.response.status_code} - {e.response.text}"
+                )
+                summary["message"] = (
+                    f"KoshConnect login failed: {e.response.status_code}"
+                )
                 return summary
             except httpx.RequestError as e:
                 logger.error(f"Network error during KoshConnect login: {e}")
                 summary["message"] = f"Network error during KoshConnect login: {e}"
                 return summary
             except Exception as e:
-                logger.error(f"Unexpected error during KoshConnect login: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error during KoshConnect login: {e}", exc_info=True
+                )
                 summary["message"] = f"Login failed: {e}"
                 return summary
 
@@ -91,19 +99,30 @@ async def login_and_sync_all_accounts(
                         db.refresh(local_account)
                     except IntegrityError as e:
                         db.rollback()
-                        logger.warning(f"Integrity error creating bank account {external_account_id}, likely duplicate. Fetching existing. Error: {e}")
+                        logger.warning(
+                            f"Integrity error creating bank account {external_account_id}, likely duplicate. Fetching existing. Error: {e}"
+                        )
                         local_account = (
                             db.query(BankAccount)
-                            .filter(BankAccount.external_account_id == external_account_id)
+                            .filter(
+                                BankAccount.external_account_id == external_account_id
+                            )
                             .first()
                         )
-                        if not local_account: # Should not happen if IntegrityError was due to duplicate
-                            logger.error(f"Failed to retrieve existing bank account after IntegrityError for {external_account_id}")
-                            raise e # Re-raise if we still can't find it
+                        if (
+                            not local_account
+                        ):  # Should not happen if IntegrityError was due to duplicate
+                            logger.error(
+                                f"Failed to retrieve existing bank account after IntegrityError for {external_account_id}"
+                            )
+                            raise e  # Re-raise if we still can't find it
                     except Exception as e:
                         db.rollback()
-                        logger.error(f"Error creating bank account {external_account_id}: {e}", exc_info=True)
-                        raise e # Re-raise the exception
+                        logger.error(
+                            f"Error creating bank account {external_account_id}: {e}",
+                            exc_info=True,
+                        )
+                        raise e  # Re-raise the exception
                 else:
                     # If account is inactive, re-activate it.
                     if not local_account.is_active:
@@ -116,15 +135,15 @@ async def login_and_sync_all_accounts(
                         local_account.balance = Decimal(str(account["balance"]))
                         db.commit()
                         db.refresh(local_account)
-                
+
                 # Skip transaction sync for inactive accounts
                 if not local_account.is_active:
                     synced_accounts_result.append(
                         {
                             "external_account_id": external_account_id,
                             "local_account_id": local_account.id,
-                            "new_transactions": 0, # No new transactions synced
-                            "status": "inactive_skipped"
+                            "new_transactions": 0,  # No new transactions synced
+                            "status": "inactive_skipped",
                         }
                     )
                     continue
@@ -138,21 +157,35 @@ async def login_and_sync_all_accounts(
                     tx_response.raise_for_status()
                     transactions_data = tx_response.json()
                 except httpx.HTTPStatusError as e:
-                    logger.error(f"HTTP error fetching transactions for {external_account_id}: {e.response.status_code} - {e.response.text}")
-                    transactions_data = [] # Continue without transactions for this account
+                    logger.error(
+                        f"HTTP error fetching transactions for {external_account_id}: {e.response.status_code} - {e.response.text}"
+                    )
+                    transactions_data = (
+                        []
+                    )  # Continue without transactions for this account
                 except httpx.RequestError as e:
-                    logger.error(f"Network error fetching transactions for {external_account_id}: {e}")
-                    transactions_data = [] # Continue without transactions for this account
+                    logger.error(
+                        f"Network error fetching transactions for {external_account_id}: {e}"
+                    )
+                    transactions_data = (
+                        []
+                    )  # Continue without transactions for this account
                 except Exception as e:
-                    logger.error(f"Unexpected error fetching transactions for {external_account_id}: {e}", exc_info=True)
-                    transactions_data = [] # Continue without transactions for this account
-
+                    logger.error(
+                        f"Unexpected error fetching transactions for {external_account_id}: {e}",
+                        exc_info=True,
+                    )
+                    transactions_data = (
+                        []
+                    )  # Continue without transactions for this account
 
                 new_transactions_count = 0
                 for tx in transactions_data:
                     existing_tx = (
                         db.query(Transaction)
-                        .filter(Transaction.external_transaction_id == tx["transaction_id"])
+                        .filter(
+                            Transaction.external_transaction_id == tx["transaction_id"]
+                        )
                         .first()
                     )
                     if existing_tx:
@@ -163,7 +196,9 @@ async def login_and_sync_all_accounts(
                             user_id=user_id,
                             account_id=local_account.id,
                             source="BANK",
-                            date=datetime.fromisoformat(tx["date"].replace("Z", "+00:00")),
+                            date=datetime.fromisoformat(
+                                tx["date"].replace("Z", "+00:00")
+                            ),
                             amount=Decimal(str(tx["amount"])),
                             currency=tx["currency"],
                             type=tx["type"],
@@ -176,20 +211,35 @@ async def login_and_sync_all_accounts(
                         db.commit()
                         db.refresh(new_tx)
                         new_transactions_count += 1
+                        # Log the transaction event (non-blocking)
+                        log_event_async(
+                            db=db,
+                            user_id=user_id,
+                            event_type="transaction_synced",
+                            entity_type="transaction",
+                            entity_id=str(new_tx.id),
+                            payload={
+                                "amount": float(new_tx.amount),
+                                "currency": new_tx.currency,
+                                "type": new_tx.type,
+                                "status": new_tx.status,
+                                "account_id": str(new_tx.account_id),
+                                "date": new_tx.date.isoformat(),
+                            },
+                        )
                     except Exception as e:
                         db.rollback()
-                        logger.error(f"Failed to add transaction {tx['transaction_id']}: {e}", exc_info=True)
-                        # Decide if you want to re-raise or just log and continue
-                        # For now, we log and continue to process other transactions
-                        # If a single transaction failure should halt the whole sync, re-raise here.
-
+                        logger.error(
+                            f"Failed to add transaction {tx['transaction_id']}: {e}",
+                            exc_info=True,
+                        )
 
                 synced_accounts_result.append(
                     {
                         "external_account_id": external_account_id,
                         "local_account_id": local_account.id,
                         "new_transactions": new_transactions_count,
-                        "status": "synced"
+                        "status": "synced",
                     }
                 )
 
@@ -200,7 +250,12 @@ async def login_and_sync_all_accounts(
 
     except Exception as e:
         # Catch any unexpected error that might escape above try/except blocks
-        logger.critical(f"Unhandled critical error in login_and_sync_all_accounts: {e}", exc_info=True)
-        summary["message"] = f"An unexpected error occurred during bank synchronization: {e}"
+        logger.critical(
+            f"Unhandled critical error in login_and_sync_all_accounts: {e}",
+            exc_info=True,
+        )
+        summary["message"] = (
+            f"An unexpected error occurred during bank synchronization: {e}"
+        )
         # Re-raise the exception to ensure FastAPI catches it and provides a traceback
         raise e

@@ -6,23 +6,29 @@ from datetime import datetime, timedelta
 from app.models.bank import BankAccount, Transaction
 from app.schemas.bank import TransactionCreate
 
+
 def get_bank_account(db: Session, bank_account_id: uuid.UUID):
     return db.query(BankAccount).filter(BankAccount.id == bank_account_id).first()
+
 
 def get_bank_accounts_by_user(db: Session, user_id: str):
     return db.query(BankAccount).filter(BankAccount.user_id == user_id).all()
 
+
 def get_bank_account_by_user_and_bank_name(db: Session, user_id: str, bank_name: str):
-    return db.query(BankAccount).filter(
-        BankAccount.user_id == user_id,
-        BankAccount.bank_name == bank_name
-    ).first()
+    return (
+        db.query(BankAccount)
+        .filter(BankAccount.user_id == user_id, BankAccount.bank_name == bank_name)
+        .first()
+    )
+
 
 def deactivate_bank_accounts_by_user(db: Session, user_id: str):
     db.query(BankAccount).filter(BankAccount.user_id == user_id).update(
         {BankAccount.is_active: False}, synchronize_session=False
     )
     db.commit()
+
 
 def delete_transactions_by_user(db: Session, user_id: str):
     db.query(Transaction).filter(Transaction.user_id == user_id).delete()
@@ -36,18 +42,23 @@ def create_transaction(db: Session, transaction: TransactionCreate, user_id: str
     db.refresh(db_transaction)
     return db_transaction
 
+
 def get_transactions_by_account(db: Session, account_id: uuid.UUID):
     return db.query(Transaction).filter(Transaction.account_id == account_id).all()
+
 
 def get_transactions_by_user(db: Session, user_id: str):
     return db.query(Transaction).filter(Transaction.user_id == user_id).all()
 
-def get_user_transactions_last_7_days(db: Session, user_id: str):
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
-    return db.query(Transaction).filter(
-        Transaction.user_id == user_id,
-        Transaction.date >= seven_days_ago
-    ).all()
+
+def get_user_transactions_last_30_days(db: Session, user_id: str):
+    thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+    return (
+        db.query(Transaction)
+        .filter(Transaction.user_id == user_id, Transaction.date >= thirty_days_ago)
+        .all()
+    )
+
 
 def get_total_spending_for_category_and_month(
     db: Session, user_id: str, category: str, year: int, month: int
@@ -66,14 +77,17 @@ def get_total_spending_for_category_and_month(
             Transaction.category == category,
             Transaction.date >= start_of_month,
             Transaction.date <= end_of_month,
-            Transaction.type == "DEBIT",  # Only consider debit transactions for spending
+            Transaction.type
+            == "DEBIT",  # Only consider debit transactions for spending
         )
         .scalar()
     )
     return total_spent if total_spent is not None else 0.0
 
 
-def get_monthly_spending_history(db: Session, user_id: str, category: str, months: int = 12):
+def get_monthly_spending_history(
+    db: Session, user_id: str, category: str, months: int = 12
+):
     """
     Computes the average and minimum monthly spending for a category over a given period.
     """
@@ -83,12 +97,14 @@ def get_monthly_spending_history(db: Session, user_id: str, category: str, month
 
     for i in range(months):
         # Go back month by month
-        target_date = today - timedelta(days=i * 30) # Approximate
+        target_date = today - timedelta(days=i * 30)  # Approximate
         year, month = target_date.year, target_date.month
 
         if (year, month) not in processed_months:
             processed_months.add((year, month))
-            monthly_spend = get_total_spending_for_category_and_month(db, user_id, category, year, month)
+            monthly_spend = get_total_spending_for_category_and_month(
+                db, user_id, category, year, month
+            )
             # Only include months where there was spending, to get a realistic 'min_spend'
             if monthly_spend > 0:
                 monthly_spends.append(monthly_spend)
