@@ -1,8 +1,10 @@
 import httpx
 from sqlalchemy.orm import Session
-from app.crud.bank import get_user_transactions_last_7_days
+from app.crud.bank import get_user_transactions_last_30_days
+
 from app.schemas.ai_advisor import AIAdvisorResponse
 from app.config.settings import settings
+from app.services.event_logger import log_event_async
 
 
 def is_greeting(text: str) -> bool:
@@ -23,7 +25,7 @@ async def generate_advice(
     db: Session, user_id: str, user_prompt: str
 ) -> AIAdvisorResponse:
 
-    transactions = get_user_transactions_last_7_days(db, user_id)
+    transactions = get_user_transactions_last_30_days(db, user_id)
 
     if not transactions:
         overview = "No transactions found for the last 7 days."
@@ -99,7 +101,7 @@ async def generate_advice(
             "- Do NOT reframe the user's question\n"
             "- Do NOT repeat the financial overview text\n\n"
             "---BEGIN DATA---\n"
-            "Financial overview (7 days):\n"
+            "Financial overview (30 days):\n"
             f"{overview}\n\n"
             "User question:\n"
             f"{user_prompt}\n"
@@ -123,6 +125,19 @@ async def generate_advice(
     # preserve spacing for UI rendering
     formatted_output = raw_model_output.strip()
 
+    # Log the advice event (non-blocking)
+    log_event_async(
+        db=db,
+        user_id=user_id,
+        event_type="advice_generated",
+        entity_type="ai_advice",
+        entity_id=user_id,  # or a generated advice id if available
+        payload={
+            "user_prompt": user_prompt,
+            "summary": overview,
+            "advice": formatted_output,
+        },
+    )
     return AIAdvisorResponse(
         summary=overview,
         advice=formatted_output,
