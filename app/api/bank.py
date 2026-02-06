@@ -1,5 +1,5 @@
 # app/api/bank_routes.py
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 import uuid
 from typing import List
@@ -16,6 +16,7 @@ router = APIRouter()
 async def login_to_bank_and_sync(
     username: str = Form(...),
     password: str = Form(...),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -25,6 +26,7 @@ async def login_to_bank_and_sync(
     """
 
     # 1. Login to bank API
+
     sync_summary = await login_and_sync_all_accounts(
         user_id=current_user.user_id,
         username=username,
@@ -32,10 +34,27 @@ async def login_to_bank_and_sync(
         db=db,
     )
 
+    # Update sync status metadata
+    from app.services.bank_sync_status import record_bank_sync_attempt
+
+    success = sync_summary["status"] == "success"
+    failure_reason = sync_summary["message"] if not success else None
+    record_bank_sync_attempt(db, current_user.user_id, success, failure_reason)
+
     if sync_summary["status"] == "failed":
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=sync_summary["message"],
+        )
+
+    # Trigger background tasks for predictions and budget evaluation
+    if background_tasks is not None:
+        from app.services.background_tasks import (
+            trigger_predictions_and_budget_evaluation,
+        )
+
+        background_tasks.add_task(
+            trigger_predictions_and_budget_evaluation, current_user.user_id
         )
 
     return sync_summary
@@ -77,6 +96,7 @@ def read_bank_accounts(
 @router.post("/transactions", response_model=schemas.Transaction)
 def create_transaction(
     transaction: schemas.TransactionCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -84,9 +104,18 @@ def create_transaction(
     db_account = crud.get_bank_account(db, transaction.account_id)
     if not db_account or db_account.user_id != current_user.user_id:
         raise HTTPException(status_code=403, detail="Unauthorized for this account")
-    return crud.create_transaction(
-        db=db, transaction_data=transaction.dict(), user_id=current_user.user_id
+    db_transaction = crud.create_transaction(
+        db=db, transaction=transaction, user_id=current_user.user_id
     )
+
+    # Trigger background tasks for predictions and budget evaluation
+    from app.services.background_tasks import trigger_predictions_and_budget_evaluation
+
+    background_tasks.add_task(
+        trigger_predictions_and_budget_evaluation, current_user.user_id
+    )
+
+    return db_transaction
 
 
 @router.get("/accounts/nabil", response_model=schemas.BankAccount)

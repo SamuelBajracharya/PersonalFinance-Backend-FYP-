@@ -1,8 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
+import app.services.budget_events  # Import event handler modules to ensure registration
+import app.services.prediction_events
+import app.services.reward_events
 from app.db import Base, engine
-import app.models # Import all models to register them with Base.metadata
+import app.models  # Import all models to register them with Base.metadata
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -12,16 +15,16 @@ app = FastAPI()
 
 # CORS configuration
 origins = [
-    "http://localhost:3000", 
-    "http://127.0.0.1:3000",  
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,        
-    allow_credentials=True,       
-    allow_methods=["*"],       
-    allow_headers=["*"],            
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include your API routes

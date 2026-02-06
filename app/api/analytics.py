@@ -73,7 +73,9 @@ def get_financial_analytics(
     now = datetime.now(timezone.utc)
 
     # Define the 12-month period
-    start_date = (now - pd.DateOffset(months=11)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_date = (now - pd.DateOffset(months=11)).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
     end_date = now
 
     # Filter for the last 12 months and create a copy to avoid SettingWithCopyWarning
@@ -221,7 +223,26 @@ def get_financial_analytics(
         .items()
     ]
 
-    # --- Final Response ---
+    # --- Freshness Metadata ---
+    from app.crud.bank_sync_status import get_sync_status
+
+    sync_status = get_sync_status(db, current_user.user_id)
+    is_data_fresh = False
+    last_successful_sync = None
+    last_attempted_sync = None
+    sync_status_value = None
+    failure_reason = None
+    if sync_status:
+        last_successful_sync = sync_status.last_successful_sync
+        last_attempted_sync = sync_status.last_attempted_sync
+        sync_status_value = sync_status.sync_status
+        failure_reason = sync_status.failure_reason
+        from datetime import date
+
+        is_data_fresh = (
+            last_successful_sync is not None
+            and last_successful_sync.date() == date.today()
+        )
     return schemas.AnalyticsResponse(
         yearlyTransactionData=format_data_for_chart(yearly_transactions),
         monthlyTransactionData=format_data_for_chart(monthly_transactions),
@@ -234,4 +255,9 @@ def get_financial_analytics(
         weeklyLineSeries=weeklyLineSeries,
         pieExpense=pieExpense,
         pieIncome=pieIncome,
+        is_data_fresh=is_data_fresh,
+        last_successful_sync=last_successful_sync,
+        last_attempted_sync=last_attempted_sync,
+        sync_status=sync_status_value,
+        failure_reason=failure_reason,
     )

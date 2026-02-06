@@ -15,15 +15,30 @@ def log_event_async(
     entity_id: str,
     payload: Dict[str, Any],
 ):
+    import datetime, decimal, json
+
+    def make_json_safe(obj):
+        if isinstance(obj, dict):
+            return {k: make_json_safe(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [make_json_safe(v) for v in obj]
+        elif isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
+        elif isinstance(obj, decimal.Decimal):
+            return float(obj)
+        else:
+            return obj
+
     def _log():
         db = SessionLocal()
         try:
+            safe_payload = make_json_safe(payload)
             event = FinancialEvent(
                 user_id=user_id,
                 event_type=event_type,
                 entity_type=entity_type,
                 entity_id=entity_id,
-                payload=payload,
+                payload=safe_payload,
             )
             db.add(event)
             db.commit()

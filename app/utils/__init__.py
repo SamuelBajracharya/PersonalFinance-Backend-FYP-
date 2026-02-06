@@ -8,6 +8,7 @@ from .auth import (
 )
 from .deps import get_current_user, get_db, get_current_user_from_temp_token
 from .email import send_otp_email
+from .events import dispatcher, DomainEvent
 
 __all__ = [
     "get_password_hash",
@@ -20,4 +21,6 @@ __all__ = [
     "create_temp_token",
     "get_current_user_from_temp_token",
     "send_otp_email",
+    "dispatcher",
+    "DomainEvent",
 ]
