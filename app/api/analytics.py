@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
 import pandas as pd
@@ -19,6 +19,9 @@ def get_financial_analytics(
     external_id: str,  # Now string for external_account_id
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    time_horizon: str = Query(
+        "30d", description="Time horizon: 7d, 30d, 90d, calendar_month"
+    ),
 ):
     # Verify account ownership using external_account_id
     db_bank_account = (
@@ -72,16 +75,23 @@ def get_financial_analytics(
     # Use timezone-aware UTC for all date operations
     now = datetime.now(timezone.utc)
 
-    # Define the 12-month period
-    start_date = (now - pd.DateOffset(months=11)).replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    )
+    # Determine start_date and end_date based on time_horizon
+    if time_horizon == "7d":
+        start_date = now - pd.Timedelta(days=6)
+    elif time_horizon == "30d":
+        start_date = now - pd.Timedelta(days=29)
+    elif time_horizon == "90d":
+        start_date = now - pd.Timedelta(days=89)
+    elif time_horizon == "calendar_month":
+        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_date = now - pd.Timedelta(days=29)
     end_date = now
 
-    # Filter for the last 12 months and create a copy to avoid SettingWithCopyWarning
-    df_last_12_months = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
+    # Filter for the selected time horizon
+    df_horizon = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
 
-    # Filter for the current month for weekly stats
+    # For weekly stats, use current month
     df_current_month = df[
         (df["date"].dt.year == now.year) & (df["date"].dt.month == now.month)
     ]
@@ -131,8 +141,8 @@ def get_financial_analytics(
 
     # Group by 'Month YYYY' string format
     monthly_transactions_series = (
-        df_last_12_months[df_last_12_months["type"] == "DEBIT"]
-        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
+        df_horizon[df_horizon["type"] == "DEBIT"]
+        .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
         .sum()
     )
     monthly_transactions = process_monthly_data(
@@ -151,8 +161,8 @@ def get_financial_analytics(
     )
 
     monthly_balance_series = (
-        df_last_12_months[df_last_12_months["type"] == "CREDIT"]
-        .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
+        df_horizon[df_horizon["type"] == "CREDIT"]
+        .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
         .sum()
     )
     monthly_balance = process_monthly_data(monthly_balance_series, all_months_labels)

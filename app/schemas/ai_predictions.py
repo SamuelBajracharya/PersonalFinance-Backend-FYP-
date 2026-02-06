@@ -16,6 +16,8 @@ class BudgetPrediction(BaseModel):
     sync_status: str | None = None
     failure_reason: str | None = None
 
+    time_horizon: str = "30d"
+
     class Config:
         from_attributes = True
 
@@ -31,6 +33,8 @@ class DailyPredictionCreate(BaseModel):
     predicted_amount: Decimal
     risk_probability: Decimal
     risk_level: str
+
+    time_horizon: str = "30d"
 
     class Config:
         from_attributes = True
