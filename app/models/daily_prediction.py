@@ -12,12 +12,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
+
 class DailyPrediction(Base):
     __tablename__ = "daily_predictions"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.user_id"), nullable=False)
     prediction_date = Column(Date, nullable=False)
+    time_horizon = Column(String, nullable=False, default="30d")
     category = Column(String, nullable=False)
     day_of_week = Column(String, nullable=False)
     day_of_week_id = Column(Integer, nullable=False)

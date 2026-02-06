@@ -9,14 +9,20 @@ from app.utils import dispatcher
 from app.utils.events import PredictionGenerated
 
 
-def generate_and_store_predictions_for_user(db, user_id: str):
+def generate_and_store_predictions_for_user(
+    db, user_id: str, time_horizon: str = "30d"
+):
     """
-    Generate and store predictions for all budgets of a user. Idempotent: skips if already exists for today.
+    Generate and store predictions for all budgets of a user for a given time horizon. Idempotent: skips if already exists for today and horizon.
     """
     budgets = get_budgets_by_user(db, user_id=user_id)
     if not budgets:
         return
     from app.models.daily_prediction import DailyPrediction
+
+    # Map time_horizon to look_back days for inference
+    look_back_map = {"7d": 7, "30d": 30, "90d": 90, "calendar_month": 30}
+    look_back = look_back_map.get(time_horizon, 30)
 
     for budget in budgets:
         try:
@@ -32,13 +38,15 @@ def generate_and_store_predictions_for_user(db, user_id: str):
                 user_id=user_id,
                 category=budget.category,
                 budget_remaining=budget.remaining_budget,
+                look_back=look_back,
             )
 
-            # Delete existing prediction for this user/category/date (if any)
+            # Delete existing prediction for this user/category/date/horizon (if any)
             db.query(DailyPrediction).filter_by(
                 user_id=user_id,
                 category=budget.category,
                 prediction_date=prediction_date,
+                time_horizon=time_horizon,
             ).delete()
             db.commit()
 
@@ -53,6 +61,7 @@ def generate_and_store_predictions_for_user(db, user_id: str):
                 predicted_amount=Decimal(float(predicted_amount)),
                 risk_probability=Decimal(float(risk_prob)),
                 risk_level=risk_level,
+                time_horizon=time_horizon,
             )
             pred = create_daily_prediction(db, prediction=prediction_to_store)
             payload = prediction_to_store.dict()
