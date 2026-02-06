@@ -16,12 +16,12 @@ def _unlock_reward(db: Session, user: User, reward: Reward):
     db.refresh(user_reward)
     # Log the reward unlock event (non-blocking)
     log_event_async(
-        db=db,
-        user_id=str(user.user_id),
-        event_type="reward_unlocked",
-        entity_type="reward",
-        entity_id=str(reward.id),
-        payload={
+        None,
+        str(user.user_id),
+        "reward_unlocked",
+        "reward",
+        str(reward.id),
+        {
             "reward_name": reward.name,
             "tier": reward.tier,
             "requirement_value": reward.requirement_value,

@@ -107,7 +107,7 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
 
     # Log the what-if scenario event (non-blocking)
     log_event_async(
-        db,
+        None,
         str(user.user_id),
         "what_if_generated",
         "what_if_scenario",

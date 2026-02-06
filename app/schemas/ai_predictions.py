@@ -2,6 +2,7 @@ from pydantic import BaseModel
 from datetime import date
 from decimal import Decimal
 
+
 class BudgetPrediction(BaseModel):
     category: str
     predicted_amount: float
@@ -9,9 +10,15 @@ class BudgetPrediction(BaseModel):
     risk_level: str
     remaining_budget: float
     prediction_date: date
+    is_data_fresh: bool = True
+    last_successful_sync: date | None = None
+    last_attempted_sync: date | None = None
+    sync_status: str | None = None
+    failure_reason: str | None = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+
 
 class DailyPredictionCreate(BaseModel):
     user_id: str
@@ -26,4 +33,4 @@ class DailyPredictionCreate(BaseModel):
     risk_level: str
 
     class Config:
-        orm_mode = True
+        from_attributes = True

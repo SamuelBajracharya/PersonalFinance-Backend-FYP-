@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 from .auth import router as auth_router
 from .bank import router as bank_router
+from .bank_sync_status import router as bank_sync_status_router
+from .bank_sync_now import router as bank_sync_now_router
 from .analytics import router as analytics_router
 from .dashboard import router as dashboard_router
 from .ai_advisor import router as ai_advisor_router
@@ -15,6 +17,8 @@ api_router = APIRouter()
 
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(bank_router, prefix="/bank", tags=["bank"])
+api_router.include_router(bank_sync_status_router, prefix="/bank", tags=["bank"])
+api_router.include_router(bank_sync_now_router, prefix="/bank", tags=["bank"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(ai_advisor_router, prefix="/ai", tags=["ai"])

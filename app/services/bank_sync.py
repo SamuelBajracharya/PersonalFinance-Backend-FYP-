@@ -11,6 +11,8 @@ from sqlalchemy.exc import IntegrityError
 from app.models.bank import BankAccount, Transaction
 from app.models.user import User
 from app.services.event_logger import log_event_async
+from app.utils import dispatcher
+from app.utils.events import TransactionCreated
 
 EXTERNAL_BANK_API_BASE_URL = "https://koshconnect.onrender.com"
 
@@ -93,6 +95,7 @@ async def login_and_sync_all_accounts(
                             account_type=account["account_type"],
                             balance=Decimal(str(account["balance"])),
                             is_active=True,
+                            bank_token=bank_token,
                         )
                         db.add(local_account)
                         db.commit()
@@ -133,6 +136,12 @@ async def login_and_sync_all_accounts(
                     # Update balance if changed
                     if local_account.balance != Decimal(str(account["balance"])):
                         local_account.balance = Decimal(str(account["balance"]))
+                        db.commit()
+                        db.refresh(local_account)
+
+                    # Update bank_token if changed
+                    if local_account.bank_token != bank_token:
+                        local_account.bank_token = bank_token
                         db.commit()
                         db.refresh(local_account)
 
@@ -180,6 +189,7 @@ async def login_and_sync_all_accounts(
                     )  # Continue without transactions for this account
 
                 new_transactions_count = 0
+                latest_tx_datetime = None
                 for tx in transactions_data:
                     existing_tx = (
                         db.query(Transaction)
@@ -191,14 +201,15 @@ async def login_and_sync_all_accounts(
                     if existing_tx:
                         continue
                     try:
+                        tx_datetime = datetime.fromisoformat(
+                            tx["date"].replace("Z", "+00:00")
+                        )
                         new_tx = Transaction(
                             external_transaction_id=tx["transaction_id"],
                             user_id=user_id,
                             account_id=local_account.id,
                             source="BANK",
-                            date=datetime.fromisoformat(
-                                tx["date"].replace("Z", "+00:00")
-                            ),
+                            date=tx_datetime,
                             amount=Decimal(str(tx["amount"])),
                             currency=tx["currency"],
                             type=tx["type"],
@@ -211,21 +222,32 @@ async def login_and_sync_all_accounts(
                         db.commit()
                         db.refresh(new_tx)
                         new_transactions_count += 1
+                        # Track latest transaction datetime
+                        if (
+                            latest_tx_datetime is None
+                            or tx_datetime > latest_tx_datetime
+                        ):
+                            latest_tx_datetime = tx_datetime
                         # Log the transaction event (non-blocking)
+                        payload = {
+                            "amount": float(new_tx.amount),
+                            "currency": new_tx.currency,
+                            "type": new_tx.type,
+                            "status": new_tx.status,
+                            "account_id": str(new_tx.account_id),
+                            "date": new_tx.date.isoformat(),
+                        }
                         log_event_async(
-                            db=db,
-                            user_id=user_id,
-                            event_type="transaction_synced",
-                            entity_type="transaction",
-                            entity_id=str(new_tx.id),
-                            payload={
-                                "amount": float(new_tx.amount),
-                                "currency": new_tx.currency,
-                                "type": new_tx.type,
-                                "status": new_tx.status,
-                                "account_id": str(new_tx.account_id),
-                                "date": new_tx.date.isoformat(),
-                            },
+                            None,
+                            user_id,
+                            "transaction_synced",
+                            "transaction",
+                            str(new_tx.id),
+                            payload,
+                        )
+                        # Emit domain event
+                        dispatcher.dispatch(
+                            TransactionCreated(db, user_id, str(new_tx.id), payload)
                         )
                     except Exception as e:
                         db.rollback()
@@ -233,6 +255,15 @@ async def login_and_sync_all_accounts(
                             f"Failed to add transaction {tx['transaction_id']}: {e}",
                             exc_info=True,
                         )
+                # Update last_transaction_fetched_at if new transactions were fetched
+                if new_transactions_count > 0 and latest_tx_datetime is not None:
+                    from app.crud.bank_sync_status import update_sync_status
+
+                    update_sync_status(
+                        db=db,
+                        user_id=user_id,
+                        last_tx_fetched=latest_tx_datetime,
+                    )
 
                 synced_accounts_result.append(
                     {

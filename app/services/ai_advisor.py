@@ -127,12 +127,12 @@ async def generate_advice(
 
     # Log the advice event (non-blocking)
     log_event_async(
-        db=db,
-        user_id=user_id,
-        event_type="advice_generated",
-        entity_type="ai_advice",
-        entity_id=user_id,  # or a generated advice id if available
-        payload={
+        None,
+        user_id,
+        "advice_generated",
+        "ai_advice",
+        user_id,  # or a generated advice id if available
+        {
             "user_prompt": user_prompt,
             "summary": overview,
             "advice": formatted_output,
