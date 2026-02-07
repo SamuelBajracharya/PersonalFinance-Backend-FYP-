@@ -27,12 +27,12 @@ def handle_transaction_created(event: TransactionCreated):
                     "remaining_budget": float(budget.remaining_budget),
                 }
                 log_event_async(
-                    db=db,
-                    user_id=user_id,
-                    event_type="budget_completed",
-                    entity_type="budget",
-                    entity_id=budget.id,
-                    payload=payload,
+                    db,
+                    user_id,
+                    "budget_completed",
+                    "budget",
+                    budget.id,
+                    payload,
                 )
                 dispatcher.dispatch(BudgetCompleted(db, user_id, budget.id, payload))
 
