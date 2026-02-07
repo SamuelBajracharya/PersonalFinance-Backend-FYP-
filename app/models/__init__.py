@@ -7,6 +7,7 @@ from .user_reward import UserReward
 from .daily_prediction import DailyPrediction
 from .financial_event import FinancialEvent
 from .bank_sync_status import BankSyncStatus, SyncStatusEnum
+from .goal import Goal, GoalType, GoalStatus
 
 __all__ = [
     "User",
@@ -21,4 +22,7 @@ __all__ = [
     "FinancialEvent",
     "BankSyncStatus",
     "SyncStatusEnum",
+    "Goal",
+    "GoalType",
+    "GoalStatus",
 ]

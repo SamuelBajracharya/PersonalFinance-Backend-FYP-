@@ -24,6 +24,7 @@ class User(Base):
     budgets = relationship("Budget", back_populates="user")
     unlocked_rewards = relationship("UserReward", back_populates="user")
     predictions = relationship("DailyPrediction", back_populates="user")
+    goals = relationship("Goal", back_populates="user")
 
     @property
     def rank(self):

@@ -1,6 +1,7 @@
 import httpx
 from sqlalchemy.orm import Session
 from app.crud.bank import get_user_transactions_last_30_days
+from app.crud.goal import get_goals_by_user
 
 from app.schemas.ai_advisor import AIAdvisorResponse
 from app.config.settings import settings
@@ -26,6 +27,7 @@ async def generate_advice(
 ) -> AIAdvisorResponse:
 
     transactions = get_user_transactions_last_30_days(db, user_id)
+    goals = get_goals_by_user(db, user_id)
 
     if not transactions:
         overview = "No transactions found for the last 7 days."
@@ -52,6 +54,20 @@ async def generate_advice(
             spending_highlights.items(), key=lambda x: x[1], reverse=True
         ):
             overview += f"- {category}: NRs.{amount:.2f}\n"
+
+    if not goals:
+        goals_overview = "No active financial goals."
+    else:
+        goals_overview = "Goals:\n"
+        for goal in goals:
+            progress = 0.0
+            if goal.target_amount:
+                progress = float(goal.current_amount) / float(goal.target_amount) * 100
+            goals_overview += (
+                f"- {goal.goal_type.value}: NRs.{float(goal.current_amount):.2f} / "
+                f"NRs.{float(goal.target_amount):.2f} "
+                f"(Deadline: {goal.deadline}, Status: {goal.status.value}, Progress: {progress:.1f}%)\n"
+            )
 
     # -------------------------------
     # GREETING MODE
@@ -103,6 +119,8 @@ async def generate_advice(
             "---BEGIN DATA---\n"
             "Financial overview (30 days):\n"
             f"{overview}\n\n"
+            "Goals overview:\n"
+            f"{goals_overview}\n\n"
             "User question:\n"
             f"{user_prompt}\n"
             "---END DATA---"
