@@ -104,8 +104,48 @@ def create_transaction(
     db_account = crud.get_bank_account(db, transaction.account_id)
     if not db_account or db_account.user_id != current_user.user_id:
         raise HTTPException(status_code=403, detail="Unauthorized for this account")
+    # Limit manual transaction impact
+    if transaction.source == "MANUAL":
+        # Cap amount for manual transactions: 20% of largest active goal
+        from app.crud.goal import get_active_goals_by_user
+
+        active_goals = get_active_goals_by_user(db, current_user.user_id)
+        if not active_goals:
+            raise HTTPException(
+                status_code=400,
+                detail="No active financial goals found. Manual transaction not allowed.",
+            )
+        max_goal_amount = max([float(goal.target_amount) for goal in active_goals])
+        dynamic_cap = max_goal_amount * 0.2
+        min_cap = 200
+        max_cap = 2000
+        allowed_cap = min(max(dynamic_cap, min_cap), max_cap)
+        if transaction.amount > allowed_cap:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Manual transaction amount exceeds allowed limit ({allowed_cap:.2f}). Limit is 20% of your largest goal, minimum 200, maximum 2,000.",
+            )
+        # Optionally restrict frequency (not implemented here, but can be added)
+
     db_transaction = crud.create_transaction(
         db=db, transaction=transaction, user_id=current_user.user_id
+    )
+
+    # Fraud-resistant: flag goals updated by manual transactions
+    from app.utils.events import dispatcher, TransactionCreated
+
+    payload = {
+        "amount": float(db_transaction.amount),
+        "currency": db_transaction.currency,
+        "type": db_transaction.type,
+        "status": db_transaction.status,
+        "account_id": str(db_transaction.account_id),
+        "date": db_transaction.date.isoformat(),
+        "source": db_transaction.source,
+        "is_manual": db_transaction.source == "MANUAL",
+    }
+    dispatcher.dispatch(
+        TransactionCreated(db, current_user.user_id, str(db_transaction.id), payload)
     )
 
     # Trigger background tasks for predictions and budget evaluation

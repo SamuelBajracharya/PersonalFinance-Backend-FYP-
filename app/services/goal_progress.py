@@ -60,6 +60,8 @@ def evaluate_goals_on_transaction(db: Session, user_id: str, transaction: Transa
         return
 
     today = transaction.date.date() if transaction.date else date.today()
+    from app.services.event_logger import log_event_async
+
     for goal in goals:
         delta = _apply_transaction_delta(goal, transaction)
         if delta != 0:
@@ -67,6 +69,26 @@ def evaluate_goals_on_transaction(db: Session, user_id: str, transaction: Transa
             if new_amount < 0:
                 new_amount = Decimal(0)
             goal.current_amount = new_amount
+            # Audit log for manual transactions affecting goals
+            if getattr(transaction, "source", None) == "MANUAL":
+                log_event_async(
+                    db,
+                    user_id,
+                    "manual_transaction_goal_update",
+                    "goal",
+                    str(goal.id),
+                    {
+                        "goal_id": str(goal.id),
+                        "goal_type": str(goal.goal_type),
+                        "transaction_id": str(transaction.id),
+                        "amount": float(transaction.amount),
+                        "date": transaction.date.isoformat(),
+                        "type": transaction.type,
+                        "category": transaction.category,
+                        "source": transaction.source,
+                        "new_goal_amount": float(new_amount),
+                    },
+                )
         _update_goal_status(goal, today)
         update_goal(db, goal)
 
@@ -95,6 +117,30 @@ def build_goal_impact_analysis(db: Session, user_id: str) -> list[dict]:
     total_income = sum(t.amount for t in transactions if t.type == "CREDIT")
     total_expenses = sum(t.amount for t in transactions if t.type == "DEBIT")
     recent_monthly_savings = Decimal(total_income - total_expenses)
+
+    # Separate manual and bank progress
+    manual_income = sum(
+        t.amount
+        for t in transactions
+        if t.type == "CREDIT" and getattr(t, "source", None) == "MANUAL"
+    )
+    manual_expenses = sum(
+        t.amount
+        for t in transactions
+        if t.type == "DEBIT" and getattr(t, "source", None) == "MANUAL"
+    )
+    bank_income = sum(
+        t.amount
+        for t in transactions
+        if t.type == "CREDIT" and getattr(t, "source", None) == "BANK"
+    )
+    bank_expenses = sum(
+        t.amount
+        for t in transactions
+        if t.type == "DEBIT" and getattr(t, "source", None) == "BANK"
+    )
+    manual_savings = Decimal(manual_income - manual_expenses)
+    bank_savings = Decimal(bank_income - bank_expenses)
 
     predictions = get_latest_predictions_for_user(db, user_id)
     predicted_monthly_spend = Decimal(
@@ -138,6 +184,8 @@ def build_goal_impact_analysis(db: Session, user_id: str) -> list[dict]:
                 "recent_monthly_savings": recent_monthly_savings,
                 "predicted_monthly_savings": predicted_monthly_savings,
                 "predicted_monthly_spend": predicted_monthly_spend,
+                "manual_savings": manual_savings,
+                "bank_savings": bank_savings,
             }
         )
 

@@ -13,6 +13,7 @@ from .goals import router as goals_router
 from .rewards import router as rewards_router  # Import the new rewards router
 from .ai_predictions import router as ai_predictions_router
 from .timeline import router as timeline_router
+from .vouchers import router as vouchers_router
 
 api_router = APIRouter()
 
@@ -25,7 +26,8 @@ api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(ai_advisor_router, prefix="/ai", tags=["ai"])
 api_router.include_router(ai_predictions_router, prefix="/ai", tags=["ai"])
 api_router.include_router(budget_router, prefix="/budgets", tags=["budgets"])
-api_router.include_router(goals_router, prefix="/goals", tags=["goals"])
+
+api_router.include_router(vouchers_router, prefix="/vouchers", tags=["vouchers"])
 
 api_router.include_router(
     what_if_scenarios_router, prefix="/what-if-scenarios", tags=["what-if-scenarios"]
