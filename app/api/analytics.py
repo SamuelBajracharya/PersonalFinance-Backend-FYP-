@@ -22,6 +22,7 @@ def get_financial_analytics(
     time_horizon: str = Query(
         "30d", description="Time horizon: 7d, 30d, 90d, calendar_month"
     ),
+    year: int = Query(None, description="Year for monthly analytics (e.g. 2025)"),
 ):
     # Verify account ownership using external_account_id
     db_bank_account = (
@@ -122,12 +123,22 @@ def get_financial_analytics(
         ]
 
     # --- Monthly Data Calculation ---
-    # Create a chronological list of all month labels for the last 12 months (e.g., 'Feb 2025', 'Mar 2025', ...)
-    all_months_labels = (
-        pd.date_range(start=start_date, end=end_date, freq="MS")
-        .strftime("%b %Y")
-        .tolist()
-    )
+    # If a year is specified, filter df for that year for monthly analytics
+    if year is not None:
+        df_monthly = df[df["date"].dt.year == year]
+        # Create labels for all months in the selected year
+        all_months_labels = [
+            pd.Timestamp(year=year, month=m, day=1).strftime("%b %Y")
+            for m in range(1, 13)
+        ]
+    else:
+        df_monthly = df
+        # Default: last 12 months from start_date to end_date
+        all_months_labels = (
+            pd.date_range(start=start_date, end=end_date, freq="MS")
+            .strftime("%b %Y")
+            .tolist()
+        )
 
     def process_monthly_data(series, labels):
         # Reindex to include all 12 months, filling missing ones with 0
@@ -140,11 +151,18 @@ def get_financial_analytics(
     )
 
     # Group by 'Month YYYY' string format
-    monthly_transactions_series = (
-        df_horizon[df_horizon["type"] == "DEBIT"]
-        .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
-        .sum()
-    )
+    if year is not None:
+        monthly_transactions_series = (
+            df_monthly[df_monthly["type"] == "DEBIT"]
+            .groupby(df_monthly["date"].dt.strftime("%b %Y"))["amount"]
+            .sum()
+        )
+    else:
+        monthly_transactions_series = (
+            df_horizon[df_horizon["type"] == "DEBIT"]
+            .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
+            .sum()
+        )
     monthly_transactions = process_monthly_data(
         monthly_transactions_series, all_months_labels
     )
@@ -160,11 +178,18 @@ def get_financial_analytics(
         df[df["type"] == "CREDIT"].groupby(df["date"].dt.year)["amount"].sum()
     )
 
-    monthly_balance_series = (
-        df_horizon[df_horizon["type"] == "CREDIT"]
-        .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
-        .sum()
-    )
+    if year is not None:
+        monthly_balance_series = (
+            df_monthly[df_monthly["type"] == "CREDIT"]
+            .groupby(df_monthly["date"].dt.strftime("%b %Y"))["amount"]
+            .sum()
+        )
+    else:
+        monthly_balance_series = (
+            df_horizon[df_horizon["type"] == "CREDIT"]
+            .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
+            .sum()
+        )
     monthly_balance = process_monthly_data(monthly_balance_series, all_months_labels)
 
     weekly_balance = (

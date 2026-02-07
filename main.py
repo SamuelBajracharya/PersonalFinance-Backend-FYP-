@@ -4,6 +4,7 @@ from app.api import api_router
 import app.services.budget_events  # Import event handler modules to ensure registration
 import app.services.prediction_events
 import app.services.reward_events
+import app.services.goal_events
 from app.db import Base, engine
 import app.models  # Import all models to register them with Base.metadata
 
