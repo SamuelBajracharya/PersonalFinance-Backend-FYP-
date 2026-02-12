@@ -36,7 +36,7 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
         return []
 
     # Select the top 5 categories in the last 30 days
-    top_5_categories = expenses_by_category[:5]
+    top_5_categories = expenses_by_category[:4]
 
     # Define smart percentage assignment rules (Category Caps)
     category_percentage_map = {

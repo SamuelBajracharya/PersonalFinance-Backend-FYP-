@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 
@@ -11,8 +11,8 @@ class BudgetPrediction(BaseModel):
     remaining_budget: float
     prediction_date: date
     is_data_fresh: bool = True
-    last_successful_sync: date | None = None
-    last_attempted_sync: date | None = None
+    last_successful_sync: datetime | None = None
+    last_attempted_sync: datetime | None = None
     sync_status: str | None = None
     failure_reason: str | None = None
 

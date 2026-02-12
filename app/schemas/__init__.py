@@ -6,6 +6,7 @@ from .reward import (
     RewardType,
     UserRewardCreate,
     RecentReward,
+    RecentActivity,
 )
 from .user import (
     User,
@@ -79,4 +80,5 @@ __all__ = [
     "UserRewardCreate",
     "TokenWithRewards",
     "RecentReward",
+    "RecentActivity",
 ]
