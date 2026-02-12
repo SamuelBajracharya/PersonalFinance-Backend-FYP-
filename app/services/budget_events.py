@@ -25,6 +25,7 @@ def handle_transaction_created(event: TransactionCreated):
                     "category": budget.category,
                     "budget_amount": float(budget.budget_amount),
                     "remaining_budget": float(budget.remaining_budget),
+                    "xp_gained": 10,
                 }
                 log_event_async(
                     db,

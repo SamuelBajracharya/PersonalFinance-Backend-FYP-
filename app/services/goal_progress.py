@@ -11,6 +11,70 @@ from app.crud.daily_prediction import get_latest_predictions_for_user
 _DEBT_CATEGORIES = {"debt", "loan", "emi", "credit card", "mortgage"}
 
 
+def _calculate_financial_goal_xp(goal: Goal) -> int:
+    completed_amount = Decimal(goal.current_amount)
+    target_amount = Decimal(goal.target_amount)
+    savings_amount = max(completed_amount, target_amount)
+
+    # Dynamic XP by achieved savings amount
+    if savings_amount < Decimal("5000"):
+        return 15
+    if savings_amount < Decimal("20000"):
+        return 30
+    if savings_amount < Decimal("50000"):
+        return 60
+    return 100
+
+
+def _grant_goal_achievement_rewards(db: Session, user_id: str, goal: Goal):
+    from app.models.user import User
+    from app.services.event_logger import log_event_async
+
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        return
+
+    earned_xp = _calculate_financial_goal_xp(goal)
+    user.total_xp = (user.total_xp or 0) + earned_xp
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    log_event_async(
+        db,
+        user_id,
+        "goal_completed",
+        "goal",
+        str(goal.id),
+        {
+            "goal_type": str(goal.goal_type),
+            "target_amount": float(goal.target_amount),
+            "current_amount": float(goal.current_amount),
+            "xp_gained": earned_xp,
+        },
+    )
+
+    # Achievement voucher for goal completion, aligned with current XP tier
+    try:
+        from app.services.voucher_service import (
+            issue_voucher_for_tier,
+            derive_tier_from_xp,
+        )
+
+        achievement_tier = derive_tier_from_xp(db, user.total_xp or 0)
+        issue_voucher_for_tier(db, str(user.user_id), achievement_tier)
+    except Exception:
+        pass
+
+    # Re-evaluate rewards after XP change (also handles 500 XP vouchers)
+    try:
+        from app.services.reward_evaluation import evaluate_rewards
+
+        evaluate_rewards(db, user)
+    except Exception:
+        pass
+
+
 def _calculate_progress_percent(goal: Goal) -> float:
     if not goal.target_amount or goal.target_amount == 0:
         return 0.0
@@ -89,8 +153,15 @@ def evaluate_goals_on_transaction(db: Session, user_id: str, transaction: Transa
                         "new_goal_amount": float(new_amount),
                     },
                 )
+        previous_status = goal.status
         _update_goal_status(goal, today)
         update_goal(db, goal)
+
+        if (
+            previous_status != GoalStatus.ACHIEVED
+            and goal.status == GoalStatus.ACHIEVED
+        ):
+            _grant_goal_achievement_rewards(db, user_id, goal)
 
 
 def evaluate_goals_on_prediction(db: Session, user_id: str, prediction_payload: dict):

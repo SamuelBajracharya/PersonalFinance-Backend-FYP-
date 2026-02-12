@@ -1,29 +1,12 @@
 from sqlalchemy.orm import Session
 from app.models import User, Reward, UserReward, RewardType
+from app.models.user_xp_milestone import UserXpMilestone
 import uuid
+import logging
 from app.services.event_logger import log_event_async
 
 
 def _unlock_reward(db: Session, user: User, reward: Reward):
-    # Issue vouchers for achievement tier
-    try:
-        from app.models.voucher import VoucherTemplate
-        from app.services.voucher_service import issue_voucher_to_user
-
-        tier = getattr(reward, "tier", None)
-        if tier:
-            voucher_templates = (
-                db.query(VoucherTemplate)
-                .filter(
-                    VoucherTemplate.tier_required == tier,
-                    VoucherTemplate.is_active == True,
-                )
-                .all()
-            )
-            for vt in voucher_templates:
-                issue_voucher_to_user(db, str(user.user_id), vt)
-    except Exception:
-        pass
     """
     Helper function to unlock a specific reward for a user.
     """
@@ -33,6 +16,17 @@ def _unlock_reward(db: Session, user: User, reward: Reward):
     db.add(user_reward)
     db.commit()
     db.refresh(user_reward)
+
+    # Issue one voucher after reward is successfully unlocked
+    from app.services.voucher_service import issue_voucher_for_tier
+
+    issue_voucher_for_tier(
+        db,
+        str(user.user_id),
+        getattr(reward, "tier", None),
+        source_type="reward",
+        source_id=str(reward.id),
+    )
     # Log the reward unlock event (non-blocking)
     log_event_async(
         None,
@@ -44,18 +38,19 @@ def _unlock_reward(db: Session, user: User, reward: Reward):
             "reward_name": reward.name,
             "tier": reward.tier,
             "requirement_value": reward.requirement_value,
+            "xp_gained": 0,
         },
     )
     print(f"User {user.user_id} unlocked reward: {reward.name} Tier {reward.tier}")
 
 
 def evaluate_rewards(db: Session, user: User) -> list[Reward]:
-    # XP milestone voucher logic
-    xp_milestones = [500, 1000, 2500, 5000]
+    # XP milestone voucher logic (every 500 XP)
     try:
-        from app.models.user_xp_milestone import UserXpMilestone
-        from app.models.voucher import VoucherTemplate
-        from app.services.voucher_service import issue_voucher_to_user
+        from app.services.voucher_service import (
+            issue_voucher_for_tier,
+            derive_tier_from_xp,
+        )
 
         user_xp = user.total_xp if user.total_xp is not None else 0
         achieved_milestones = {
@@ -64,24 +59,31 @@ def evaluate_rewards(db: Session, user: User) -> list[Reward]:
             .filter(UserXpMilestone.user_id == user.user_id)
             .all()
         }
+        highest_milestone = (user_xp // 500) * 500
+        xp_milestones = range(500, highest_milestone + 1, 500)
+
         for milestone in xp_milestones:
-            if user_xp >= milestone and milestone not in achieved_milestones:
-                # Mark milestone as achieved
-                db.add(UserXpMilestone(user_id=user.user_id, milestone=milestone))
-                db.commit()
-                # Issue vouchers for this milestone
-                voucher_templates = (
-                    db.query(VoucherTemplate)
-                    .filter(
-                        VoucherTemplate.xp_required == milestone,
-                        VoucherTemplate.is_active == True,
-                    )
-                    .all()
+            if milestone not in achieved_milestones:
+                # Issue one voucher for each +500 milestone reached
+                milestone_tier = derive_tier_from_xp(db, milestone)
+                voucher = issue_voucher_for_tier(
+                    db,
+                    str(user.user_id),
+                    milestone_tier,
+                    source_type="xp_milestone",
+                    source_id=str(milestone),
                 )
-                for vt in voucher_templates:
-                    issue_voucher_to_user(db, str(user.user_id), vt)
-    except Exception:
-        pass
+
+                # Mark milestone achieved only when voucher issuance step succeeded
+                if voucher is not None:
+                    db.add(UserXpMilestone(user_id=user.user_id, milestone=milestone))
+                    db.commit()
+    except Exception as e:
+        logging.exception(
+            "XP milestone voucher issuance failed for user %s: %s",
+            user.user_id,
+            str(e),
+        )
     """
     Evaluates all potential rewards for a user and unlocks them if conditions are met.
     Returns a list of newly unlocked Reward objects.
