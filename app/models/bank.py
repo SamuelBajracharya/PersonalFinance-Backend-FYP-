@@ -25,7 +25,7 @@ class BankAccount(Base):
     account_type = Column(String, nullable=False)
     balance = Column(Numeric(12, 2), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
-    # bank_token = Column(String, nullable=True)  # Persist bank access token
+    bank_token = Column(String, nullable=True)
 
     user = relationship("User", back_populates="bank_accounts")
     transactions = relationship("Transaction", back_populates="account")

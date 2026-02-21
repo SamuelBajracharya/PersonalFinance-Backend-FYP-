@@ -38,3 +38,27 @@ class DailyPredictionCreate(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class StockPrediction(BaseModel):
+    instrument: str
+    name: str | None = None
+    source: str
+    quantity: float | None = None
+    horizon_days: int
+    confidence_level_pct: float
+    expected_return_pct: float
+    ci_low_pct: float
+    ci_high_pct: float
+    rmse: float
+    mae: float
+    directional_accuracy_pct: float
+    baseline_mean_return_pct: float
+    baseline_rmse: float
+    baseline_mae: float
+    baseline_directional_accuracy_pct: float
+    past_price_history: list[dict]
+    future_price_prediction: list[dict]
+
+    class Config:
+        from_attributes = True

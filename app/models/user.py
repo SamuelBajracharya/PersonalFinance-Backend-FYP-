@@ -25,6 +25,7 @@ class User(Base):
     unlocked_rewards = relationship("UserReward", back_populates="user")
     predictions = relationship("DailyPrediction", back_populates="user")
     goals = relationship("Goal", back_populates="user")
+    stock_instruments = relationship("StockInstrument", back_populates="user")
 
     @property
     def rank(self):

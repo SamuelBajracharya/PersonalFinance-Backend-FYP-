@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 
 from app.models.bank import BankAccount, Transaction
+from app.models.stock_instrument import StockInstrument
 from app.models.user import User
 from app.services.event_logger import log_event_async
 from app.utils import dispatcher
@@ -20,8 +22,81 @@ EXTERNAL_BANK_API_BASE_URL = "https://koshconnect.onrender.com"
 logger = logging.getLogger(__name__)
 
 
+def _extract_instruments_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    for key in (
+        "stock_instruments",
+        "instruments",
+        "investments",
+        "data",
+    ):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _sync_stock_instruments_for_user(
+    db: Session,
+    user_id: str,
+    instruments: list[dict[str, Any]],
+) -> int:
+    synced_count = 0
+
+    for item in instruments:
+        symbol = (item.get("symbol") or item.get("ticker") or "").strip().upper()
+        if not symbol:
+            continue
+
+        quantity = item.get("quantity")
+        avg_buy_price = item.get("average_buy_price", item.get("avg_buy_price"))
+        current_price = item.get("current_price", item.get("market_price"))
+
+        existing = (
+            db.query(StockInstrument)
+            .filter(
+                StockInstrument.user_id == user_id,
+                StockInstrument.symbol == symbol,
+            )
+            .first()
+        )
+
+        if not existing:
+            existing = StockInstrument(user_id=user_id, symbol=symbol)
+            db.add(existing)
+
+        existing.name = item.get("name")
+        existing.quantity = Decimal(str(quantity if quantity is not None else 0))
+        existing.average_buy_price = (
+            Decimal(str(avg_buy_price)) if avg_buy_price is not None else None
+        )
+        existing.current_price = (
+            Decimal(str(current_price)) if current_price is not None else None
+        )
+        existing.currency = item.get("currency")
+        existing.external_instrument_id = item.get(
+            "instrument_id", item.get("external_instrument_id")
+        )
+        existing.updated_at = datetime.utcnow()
+
+        synced_count += 1
+
+    if synced_count > 0:
+        db.commit()
+
+    return synced_count
+
+
 async def login_and_sync_all_accounts(
-    user_id: str, username: str, password: str, db: Session
+    user_id: str,
+    username: str | None,
+    password: str | None,
+    db: Session,
+    bank_token: str | None = None,
 ):
     """
     Logs into KoshConnect, creates BankAccount rows for each synced account,
@@ -31,23 +106,35 @@ async def login_and_sync_all_accounts(
         "status": "failed",
         "message": "Login failed or no accounts found.",
         "synced_accounts": [],
+        "synced_stock_instruments": 0,
     }
 
     try:
         async with httpx.AsyncClient() as client:
             try:
-                login_response = await client.post(
-                    f"{EXTERNAL_BANK_API_BASE_URL}/token",
-                    data={"username": username, "password": password},
-                )
-                login_response.raise_for_status()
-                login_data = login_response.json()
+                if bank_token:
+                    accounts_response = await client.get(
+                        f"{EXTERNAL_BANK_API_BASE_URL}/accounts",
+                        headers={"Authorization": f"Bearer {bank_token}"},
+                    )
+                    accounts_response.raise_for_status()
+                    login_data = {
+                        "accounts": accounts_response.json(),
+                        "access_token": bank_token,
+                    }
+                else:
+                    login_response = await client.post(
+                        f"{EXTERNAL_BANK_API_BASE_URL}/token",
+                        data={"username": username, "password": password},
+                    )
+                    login_response.raise_for_status()
+                    login_data = login_response.json()
             except httpx.HTTPStatusError as e:
                 logger.error(
                     f"HTTP error during KoshConnect login: {e.response.status_code} - {e.response.text}"
                 )
                 summary["message"] = (
-                    f"KoshConnect login failed: {e.response.status_code}"
+                    f"KoshConnect authentication failed: {e.response.status_code}"
                 )
                 return summary
             except httpx.RequestError as e:
@@ -73,6 +160,43 @@ async def login_and_sync_all_accounts(
 
             headers = {"Authorization": f"Bearer {bank_token}"}
             synced_accounts_result = []
+
+            stock_instruments = _extract_instruments_from_payload(login_data)
+            if not stock_instruments:
+                for instruments_path in (
+                    "/stock-instruments",
+                    "/instruments",
+                    "/investments",
+                ):
+                    try:
+                        instrument_res = await client.get(
+                            f"{EXTERNAL_BANK_API_BASE_URL}{instruments_path}",
+                            headers=headers,
+                        )
+                        instrument_res.raise_for_status()
+                        stock_instruments = _extract_instruments_from_payload(
+                            instrument_res.json()
+                        )
+                        if stock_instruments:
+                            break
+                    except Exception:
+                        continue
+
+            if stock_instruments:
+                try:
+                    summary["synced_stock_instruments"] = (
+                        _sync_stock_instruments_for_user(
+                            db=db,
+                            user_id=user_id,
+                            instruments=stock_instruments,
+                        )
+                    )
+                except Exception as instrument_sync_error:
+                    db.rollback()
+                    logger.error(
+                        f"Failed syncing stock instruments for user {user_id}: {instrument_sync_error}",
+                        exc_info=True,
+                    )
 
             # Process each account
             for account in accounts:
@@ -275,7 +399,9 @@ async def login_and_sync_all_accounts(
                 )
 
             summary["status"] = "success"
-            summary["message"] = "All accounts and transactions synced successfully."
+            summary["message"] = (
+                "All accounts, transactions, and stock instruments synced successfully."
+            )
             summary["synced_accounts_detail"] = synced_accounts_result
             return summary
 

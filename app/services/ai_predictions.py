@@ -1,6 +1,6 @@
 from app.crud.budget import get_budgets_by_user
 from app.crud.daily_prediction import create_daily_prediction
-from ai.inference import predict_next_day
+from ai.budget_prediction_model.inference import predict_next_day
 from app.models.user import User
 from app.schemas.ai_predictions import DailyPredictionCreate
 from decimal import Decimal

@@ -8,6 +8,7 @@ from .daily_prediction import DailyPrediction
 from .financial_event import FinancialEvent
 from .bank_sync_status import BankSyncStatus, SyncStatusEnum
 from .goal import Goal, GoalType, GoalStatus
+from .stock_instrument import StockInstrument
 
 __all__ = [
     "User",
@@ -25,4 +26,5 @@ __all__ = [
     "Goal",
     "GoalType",
     "GoalStatus",
+    "StockInstrument",
 ]
