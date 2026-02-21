@@ -2,6 +2,7 @@ import httpx
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import zlib
 
 from app.crud.stock_instrument import (
     get_stock_instrument_by_user_and_symbol,
@@ -16,6 +17,7 @@ from ai.stock_prediction_model.stock_return_forecast_colab import (
 from app.services.bank_sync import EXTERNAL_BANK_API_BASE_URL
 
 ALLOWED_FORCE_SOURCES = {"auto", "mock", "placeholder"}
+MONTE_CARLO_PATHS = 250
 
 
 def _validate_force_source(force_source: str) -> str:
@@ -45,6 +47,55 @@ def _download_close_series(symbol: str, period: str = "2y") -> pd.Series:
     return close.dropna().astype(float)
 
 
+def _estimate_noise_std(returns: pd.Series, predicted_returns: np.ndarray) -> float:
+    if len(predicted_returns) == 0:
+        return max(float(returns.std(ddof=1)), 0.001)
+
+    aligned_actual = returns.iloc[-len(predicted_returns) :].to_numpy(dtype=float)
+    residuals = aligned_actual - predicted_returns
+    residual_std = float(np.std(residuals, ddof=1)) if len(residuals) > 1 else 0.0
+    historical_std = float(returns.std(ddof=1))
+
+    return float(max(residual_std, historical_std * 0.35, 0.001))
+
+
+def _simulate_fluctuating_price_path(
+    symbol: str,
+    start_price: float,
+    base_daily_returns: np.ndarray,
+    noise_std: float,
+    horizon_days: int,
+    reference_date: str,
+) -> list[dict]:
+    seed = zlib.adler32(f"{symbol}:{horizon_days}:{reference_date}".encode("utf-8"))
+    rng = np.random.default_rng(seed)
+
+    simulated_returns = rng.normal(
+        loc=base_daily_returns,
+        scale=noise_std,
+        size=(MONTE_CARLO_PATHS, horizon_days),
+    )
+    simulated_returns = np.clip(simulated_returns, -0.2, 0.2)
+
+    growth = np.cumprod(1.0 + simulated_returns, axis=1)
+    simulated_prices = np.maximum(growth * start_price, 0.01)
+
+    representative_idx = 0
+    representative_path = simulated_prices[representative_idx]
+    lower_band = np.quantile(simulated_prices, 0.1, axis=0)
+    upper_band = np.quantile(simulated_prices, 0.9, axis=0)
+
+    return [
+        {
+            "day": day,
+            "price": float(representative_path[day - 1]),
+            "low_price": float(lower_band[day - 1]),
+            "high_price": float(upper_band[day - 1]),
+        }
+        for day in range(1, horizon_days + 1)
+    ]
+
+
 def _build_price_paths(symbol: str, horizon_days: int) -> tuple[list[dict], list[dict]]:
     close = _download_close_series(symbol, period="2y")
     if close.empty:
@@ -72,16 +123,17 @@ def _build_price_paths(symbol: str, horizon_days: int) -> tuple[list[dict], list
     )
 
     start_price = float(close.iloc[-1])
-    future_points: list[dict] = []
-    current_price = start_price
-    for day in range(1, horizon_days + 1):
-        current_price *= float(1 + predicted_daily_returns[day - 1])
-        future_points.append(
-            {
-                "day": day,
-                "price": float(current_price),
-            }
-        )
+    noise_std = _estimate_noise_std(
+        returns=returns, predicted_returns=artifacts.test_predicted_returns
+    )
+    future_points = _simulate_fluctuating_price_path(
+        symbol=symbol,
+        start_price=start_price,
+        base_daily_returns=predicted_daily_returns,
+        noise_std=noise_std,
+        horizon_days=horizon_days,
+        reference_date=close.index[-1].date().isoformat(),
+    )
 
     return past_points, future_points
 
