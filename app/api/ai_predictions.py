@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.utils.deps import get_db, get_current_user
 from app.crud.daily_prediction import get_latest_predictions_for_user
-from app.schemas.ai_predictions import BudgetPrediction
+from app.schemas.ai_predictions import BudgetPrediction, StockPrediction
 from app.models.user import User  # Import the User model
+from app.services.stock_predictions import (
+    predict_for_instrument,
+    predict_for_user_instruments,
+)
 
 router = APIRouter()
 
@@ -58,3 +62,69 @@ def get_latest_budget_predictions(
         )
         for p in predictions
     ]
+
+
+@router.get("/predict/stocks/", response_model=list[StockPrediction])
+def get_stock_predictions(
+    instrument: str | None = Query(
+        default=None,
+        description="Optional ticker symbol (e.g., AAPL). If omitted, predicts user's synced instruments.",
+    ),
+    horizon_days: int = Query(
+        default=30,
+        ge=1,
+        le=365,
+        description="Prediction horizon in days.",
+    ),
+    confidence_level: float = Query(
+        default=0.95,
+        gt=0,
+        lt=1,
+        description="Confidence level for confidence interval.",
+    ),
+    force_source: str = Query(
+        default="auto",
+        description="Data source preference: auto | mock | placeholder.",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Predict stock returns using the stock model.
+    - Without instrument: predicts for all synced instruments invested by the user.
+    - With instrument: predicts for the requested symbol (even if not in user's portfolio).
+    """
+    try:
+        if instrument:
+            prediction = predict_for_instrument(
+                db=db,
+                user_id=current_user.user_id,
+                instrument=instrument,
+                horizon_days=horizon_days,
+                confidence_level=confidence_level,
+                force_source=force_source,
+            )
+            return [StockPrediction(**prediction)]
+
+        predictions = predict_for_user_instruments(
+            db=db,
+            user_id=current_user.user_id,
+            horizon_days=horizon_days,
+            confidence_level=confidence_level,
+            force_source=force_source,
+        )
+        if not predictions:
+            raise HTTPException(
+                status_code=404,
+                detail="No synced stock instruments found for this user. Sync bank data first or pass ?instrument=SYMBOL.",
+            )
+        return [StockPrediction(**prediction) for prediction in predictions]
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate stock predictions: {exc}",
+        ) from exc
