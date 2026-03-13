@@ -34,7 +34,21 @@ from .analytics import (
     PieChartData,
 )
 from .ai_advisor import AIAdvisorRequest, AIAdvisorResponse
-from .budget import Budget, BudgetCreate, BudgetUpdate
+from .budget import (
+    Budget,
+    BudgetCreate,
+    BudgetUpdate,
+    BudgetGoalAdaptiveAdjustment,
+    BudgetGoalMicroAlert,
+    BudgetGoalPeriodReview,
+    BudgetGoalPredictionExplanation,
+    BudgetGoalSimulationRequest,
+    BudgetGoalSimulationResult,
+    BudgetGoalStatus,
+    BudgetGoalSuggestion,
+    BudgetGoalSuggestionsResponse,
+    BudgetPredictionDriver,
+)
 from .goal import Goal, GoalCreate, GoalImpactAnalysis
 from app.models.goal import GoalType, GoalStatus
 
@@ -67,6 +81,16 @@ __all__ = [
     "Budget",
     "BudgetCreate",
     "BudgetUpdate",
+    "BudgetGoalAdaptiveAdjustment",
+    "BudgetGoalMicroAlert",
+    "BudgetGoalPeriodReview",
+    "BudgetGoalPredictionExplanation",
+    "BudgetGoalSimulationRequest",
+    "BudgetGoalSimulationResult",
+    "BudgetGoalStatus",
+    "BudgetGoalSuggestion",
+    "BudgetGoalSuggestionsResponse",
+    "BudgetPredictionDriver",
     "Goal",
     "GoalCreate",
     "GoalImpactAnalysis",
