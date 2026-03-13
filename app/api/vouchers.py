@@ -1,15 +1,17 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.utils.deps import get_db, get_current_user
-from app.services.voucher_service import (
-    get_user_active_vouchers,
-    issue_voucher_to_user,
-    generate_unique_voucher_code,
-)
-from app.models.voucher import UserVoucher, VoucherStatus, VoucherTemplate
+
 from app.models.partner import Partner
 from app.models.user import User
-from datetime import datetime
+from app.models.voucher import UserVoucher, VoucherStatus, VoucherTemplate
+from app.services.voucher_service import (
+    generate_unique_voucher_code,
+    get_user_active_vouchers,
+    issue_voucher_to_user,
+)
+from app.utils.deps import get_current_user, get_db
 
 router = APIRouter()
 
@@ -87,6 +89,36 @@ def get_voucher_history(
             .first()
         )
         result.append(_serialize_user_voucher(v, template))
+    return result
+
+
+@router.get("/all-codes")
+def get_all_voucher_codes(db: Session = Depends(get_db)):
+    """
+    Public endpoint for dummy frontend: returns all issued voucher codes and their details.
+    WARNING: Do not use in production!
+    """
+    vouchers = db.query(UserVoucher).all()
+    result = []
+    for v in vouchers:
+        template = (
+            db.query(VoucherTemplate)
+            .filter(VoucherTemplate.id == v.voucher_template_id)
+            .first()
+        )
+        result.append(
+            {
+                "id": str(v.id),
+                "code": v.code,
+                "status": v.status,
+                "expires_at": v.expires_at,
+                "title": template.title if template else None,
+                "description": template.description if template else None,
+                "discount_type": template.discount_type if template else None,
+                "discount_value": template.discount_value if template else None,
+                "partner_id": str(template.partner_id) if template else None,
+            }
+        )
     return result
 
 

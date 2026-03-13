@@ -6,6 +6,24 @@ from datetime import date, timedelta
 from app import crud, schemas
 from app.utils.deps import get_db, get_current_user
 from app.models.user import User
+from app.schemas.budget import (
+    BudgetGoalAdaptiveAdjustment,
+    BudgetGoalPeriodReview,
+    BudgetGoalPredictionExplanation,
+    BudgetGoalSimulationRequest,
+    BudgetGoalSimulationResult,
+    BudgetGoalStatus,
+    BudgetGoalSuggestionsResponse,
+)
+from app.services.budget_goal_intelligence import (
+    get_adaptive_budget_adjustment,
+    get_all_budget_goal_statuses,
+    get_budget_goal_status,
+    get_budget_goal_suggestions,
+    get_budget_period_review,
+    get_budget_prediction_explanation,
+    simulate_budget_goal,
+)
 
 router = APIRouter()
 
@@ -57,6 +75,117 @@ def read_budgets(
     current_user: User = Depends(get_current_user),
 ):
     return crud.budget.get_budgets_by_user(db=db, user_id=current_user.user_id)
+
+
+@router.get("/goal-status", response_model=List[BudgetGoalStatus])
+def get_budget_goal_statuses(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return get_all_budget_goal_statuses(db, current_user.user_id)
+
+
+@router.get("/{budget_id}/goal-status", response_model=BudgetGoalStatus)
+def get_single_budget_goal_status(
+    budget_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    status_payload = get_budget_goal_status(db, current_user.user_id, budget_id)
+    if not status_payload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return status_payload
+
+
+@router.get(
+    "/{budget_id}/prediction-explanation",
+    response_model=BudgetGoalPredictionExplanation,
+)
+def get_budget_goal_prediction_explanation(
+    budget_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    explanation = get_budget_prediction_explanation(db, current_user.user_id, budget_id)
+    if not explanation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return explanation
+
+
+@router.post("/{budget_id}/simulate", response_model=BudgetGoalSimulationResult)
+def simulate_budget_goal_outcome(
+    budget_id: str,
+    payload: BudgetGoalSimulationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    simulation = simulate_budget_goal(
+        db,
+        current_user.user_id,
+        budget_id,
+        payload.reduction_percent,
+        payload.absolute_cut,
+    )
+    if not simulation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return simulation
+
+
+@router.get("/{budget_id}/suggestions", response_model=BudgetGoalSuggestionsResponse)
+def get_goal_suggestions(
+    budget_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    suggestions = get_budget_goal_suggestions(db, current_user.user_id, budget_id)
+    if not suggestions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return suggestions
+
+
+@router.get(
+    "/{budget_id}/adaptive-adjustment",
+    response_model=BudgetGoalAdaptiveAdjustment,
+)
+def get_goal_adaptive_adjustment(
+    budget_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    recommendation = get_adaptive_budget_adjustment(db, current_user.user_id, budget_id)
+    if not recommendation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return recommendation
+
+
+@router.get("/{budget_id}/review", response_model=BudgetGoalPeriodReview)
+def get_goal_period_review(
+    budget_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    review = get_budget_period_review(db, current_user.user_id, budget_id)
+    if not review:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Budget not found",
+        )
+    return review
 
 
 @router.put("/{budget_id}", response_model=schemas.Budget)
