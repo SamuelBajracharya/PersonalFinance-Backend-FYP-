@@ -44,6 +44,7 @@ class StockPrediction(BaseModel):
     instrument: str
     name: str | None = None
     source: str
+    currency: str
     quantity: float | None = None
     horizon_days: int
     confidence_level_pct: float
