@@ -3,6 +3,15 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 import zlib
+import importlib
+from datetime import date, timedelta
+
+Nepse = None
+try:
+    nepse_module = importlib.import_module("nepse")
+    Nepse = getattr(nepse_module, "Nepse", None)
+except Exception:  # pragma: no cover - optional dependency
+    Nepse = None
 
 from app.crud.stock_instrument import (
     get_stock_instrument_by_user_and_symbol,
@@ -18,6 +27,11 @@ from app.services.bank_sync import EXTERNAL_BANK_API_BASE_URL
 
 ALLOWED_FORCE_SOURCES = {"auto", "mock", "placeholder"}
 MONTE_CARLO_PATHS = 250
+NEPSE_LOOKBACK_DAYS = 730
+
+
+def _currency_for_market(prefer_nepse: bool) -> str:
+    return "RS" if prefer_nepse else "$"
 
 
 def _validate_force_source(force_source: str) -> str:
@@ -27,8 +41,9 @@ def _validate_force_source(force_source: str) -> str:
     return normalized
 
 
-def _download_close_series(symbol: str, period: str = "2y") -> pd.Series:
-    data = yf.download(symbol, period=period, auto_adjust=True, progress=False)
+def _extract_close_series_from_yahoo_frame(
+    data: pd.DataFrame, symbol: str
+) -> pd.Series:
     if data.empty:
         raise ValueError(f"No market data found for symbol: {symbol}")
 
@@ -45,6 +60,103 @@ def _download_close_series(symbol: str, period: str = "2y") -> pd.Series:
         close = close.iloc[:, 0]
 
     return close.dropna().astype(float)
+
+
+def _download_yahoo_close_series(symbol: str, period: str = "2y") -> pd.Series:
+    data = yf.download(symbol, period=period, auto_adjust=True, progress=False)
+    return _extract_close_series_from_yahoo_frame(data, symbol)
+
+
+def _download_nepse_close_series(
+    symbol: str,
+    lookback_days: int = NEPSE_LOOKBACK_DAYS,
+) -> pd.Series:
+    if Nepse is None:
+        raise ValueError(
+            "NEPSE provider is unavailable. Install with: pip install git+https://github.com/basic-bgnr/NepseUnofficialApi"
+        )
+
+    client = Nepse()
+    client.setTLSVerification(False)
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=lookback_days)
+    payload = client.getCompanyPriceVolumeHistory(
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    rows = payload.get("content", []) if isinstance(payload, dict) else payload
+    if not rows:
+        raise ValueError(f"No NEPSE history found for symbol: {symbol}")
+
+    df = pd.DataFrame(rows)
+    date_col = next(
+        (col for col in ["businessDate", "date", "tradeDate"] if col in df.columns),
+        None,
+    )
+    close_col = next(
+        (
+            col
+            for col in [
+                "closePrice",
+                "closingPrice",
+                "close",
+                "lastTradedPrice",
+                "ltp",
+            ]
+            if col in df.columns
+        ),
+        None,
+    )
+
+    if not date_col or not close_col:
+        raise ValueError(
+            f"Unexpected NEPSE payload for symbol {symbol}; missing date/close fields"
+        )
+
+    dates = pd.to_datetime(df[date_col], errors="coerce")
+    close = pd.to_numeric(
+        df[close_col].astype(str).str.replace(",", "", regex=False),
+        errors="coerce",
+    )
+    series = pd.Series(close.values, index=dates).dropna().sort_index().astype(float)
+    if series.empty:
+        raise ValueError(f"No valid NEPSE close series found for symbol: {symbol}")
+    return series
+
+
+def _download_close_series(
+    symbol: str,
+    period: str = "2y",
+    prefer_nepse: bool = False,
+) -> pd.Series:
+    normalized_symbol = symbol.strip().upper()
+    nepse_symbol = normalized_symbol.removesuffix(".NEPSE")
+    errors: list[str] = []
+
+    providers = (
+        [
+            lambda: _download_nepse_close_series(nepse_symbol),
+            lambda: _download_yahoo_close_series(normalized_symbol, period=period),
+        ]
+        if prefer_nepse
+        else [
+            lambda: _download_yahoo_close_series(normalized_symbol, period=period),
+            lambda: _download_nepse_close_series(nepse_symbol),
+        ]
+    )
+
+    for provider in providers:
+        try:
+            return provider()
+        except Exception as exc:
+            errors.append(str(exc))
+
+    raise ValueError(
+        f"No market data found for symbol: {symbol}. Provider errors: {' | '.join(errors)}"
+    )
 
 
 def _estimate_noise_std(returns: pd.Series, predicted_returns: np.ndarray) -> float:
@@ -96,8 +208,12 @@ def _simulate_fluctuating_price_path(
     ]
 
 
-def _build_price_paths(symbol: str, horizon_days: int) -> tuple[list[dict], list[dict]]:
-    close = _download_close_series(symbol, period="2y")
+def _build_price_paths(
+    symbol: str,
+    horizon_days: int,
+    prefer_nepse: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    close = _download_close_series(symbol, period="2y", prefer_nepse=prefer_nepse)
     if close.empty:
         return [], []
 
@@ -114,6 +230,7 @@ def _build_price_paths(symbol: str, horizon_days: int) -> tuple[list[dict], list
         period="5y",
         lag_days=5,
         test_size=0.2,
+        returns_override=returns,
     )
     predicted_daily_returns = forecast_next_n_returns(
         model=artifacts.model,
@@ -138,9 +255,16 @@ def _build_price_paths(symbol: str, horizon_days: int) -> tuple[list[dict], list
     return past_points, future_points
 
 
-def _attach_price_paths(prediction: dict, symbol: str, horizon_days: int) -> dict:
+def _attach_price_paths(
+    prediction: dict,
+    symbol: str,
+    horizon_days: int,
+    prefer_nepse: bool = False,
+) -> dict:
     past_price_history, future_price_prediction = _build_price_paths(
-        symbol, horizon_days
+        symbol,
+        horizon_days,
+        prefer_nepse=prefer_nepse,
     )
     prediction["past_price_history"] = past_price_history
     prediction["future_price_prediction"] = future_price_prediction
@@ -241,14 +365,23 @@ def predict_for_user_instruments(
         symbol = (
             instrument["symbol"] if isinstance(instrument, dict) else instrument.symbol
         )
+        close_series = _download_close_series(symbol, period="5y", prefer_nepse=True)
+        returns_series = close_series.pct_change().dropna()
         prediction = run_single_ticker_example(
             ticker=symbol,
             horizon_days=horizon_days,
             confidence_level=confidence_level,
+            returns_override=returns_series,
         )
-        prediction = _attach_price_paths(prediction, symbol, horizon_days)
+        prediction = _attach_price_paths(
+            prediction,
+            symbol,
+            horizon_days,
+            prefer_nepse=True,
+        )
         prediction["instrument"] = symbol
         prediction["source"] = source
+        prediction["currency"] = _currency_for_market(prefer_nepse=True)
         prediction["quantity"] = (
             instrument.get("quantity")
             if isinstance(instrument, dict)
@@ -276,16 +409,28 @@ def predict_for_instrument(
     symbol = instrument.strip().upper()
     external_instruments = _get_external_user_instruments(db, user_id)
     external_map = {item["symbol"]: item for item in external_instruments}
+    user_instrument = get_stock_instrument_by_user_and_symbol(db, user_id, symbol)
+
+    prefer_nepse = symbol.endswith(".NEPSE") or user_instrument is not None
+    close_series = _download_close_series(
+        symbol, period="5y", prefer_nepse=prefer_nepse
+    )
+    returns_series = close_series.pct_change().dropna()
 
     prediction = run_single_ticker_example(
         ticker=symbol,
         horizon_days=horizon_days,
         confidence_level=confidence_level,
+        returns_override=returns_series,
     )
-    prediction = _attach_price_paths(prediction, symbol, horizon_days)
-
-    user_instrument = get_stock_instrument_by_user_and_symbol(db, user_id, symbol)
+    prediction = _attach_price_paths(
+        prediction,
+        symbol,
+        horizon_days,
+        prefer_nepse=prefer_nepse,
+    )
     prediction["instrument"] = symbol
+    prediction["currency"] = _currency_for_market(prefer_nepse=prefer_nepse)
 
     if selected_source == "mock":
         if symbol in external_map:

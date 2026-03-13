@@ -111,12 +111,17 @@ def train_return_model(
     period: str = "5y",
     lag_days: int = 5,
     test_size: float = 0.2,
+    returns_override: pd.Series | None = None,
 ) -> ModelArtifacts:
     """
     Train linear regression on lagged returns.
     Uses StandardScaler + LinearRegression in a Pipeline (fit on train only).
     """
-    returns = download_returns(ticker=ticker, period=period)
+    returns = (
+        returns_override.copy()
+        if returns_override is not None
+        else download_returns(ticker=ticker, period=period)
+    )
     if len(returns) <= lag_days + 30:
         raise ValueError("Not enough data for selected lag_days and split.")
 
@@ -342,17 +347,23 @@ def run_single_ticker_example(
     test_size: float = 0.2,
     horizon_days: int = 30,
     confidence_level: float = 0.95,
+    returns_override: pd.Series | None = None,
 ) -> Dict[str, float]:
     """
     Train, evaluate, and forecast for a single ticker.
     Returns metrics and prediction outputs as percentages.
     """
-    full_returns = download_returns(ticker=ticker, period=period)
+    full_returns = (
+        returns_override.copy()
+        if returns_override is not None
+        else download_returns(ticker=ticker, period=period)
+    )
     artifacts = train_return_model(
         ticker=ticker,
         period=period,
         lag_days=lag_days,
         test_size=test_size,
+        returns_override=full_returns,
     )
     pred = predict_return_with_confidence(
         artifacts=artifacts,

@@ -208,7 +208,9 @@ def get_budget_prediction_explanation(
     prev_7_start = today.fromordinal(today.toordinal() - 13)
     prev_7_end = today.fromordinal(today.toordinal() - 7)
 
-    last_7_avg = _average_daily_spend(db, user_id, status["category"], last_7_start, today)
+    last_7_avg = _average_daily_spend(
+        db, user_id, status["category"], last_7_start, today
+    )
     prev_7_avg = _average_daily_spend(
         db,
         user_id,
@@ -287,8 +289,8 @@ def simulate_budget_goal(
     adjusted = baseline_projected
 
     if reduction_percent > 0:
-        adjusted = adjusted * (Decimal(100) - Decimal(str(reduction_percent))) / Decimal(
-            100
+        adjusted = (
+            adjusted * (Decimal(100) - Decimal(str(reduction_percent))) / Decimal(100)
         )
 
     if absolute_cut > 0:
@@ -309,7 +311,9 @@ def simulate_budget_goal(
     }
 
 
-def get_budget_goal_suggestions(db: Session, user_id: str, budget_id: str) -> dict | None:
+def get_budget_goal_suggestions(
+    db: Session, user_id: str, budget_id: str
+) -> dict | None:
     status = get_budget_goal_status(db, user_id, budget_id)
     if not status:
         return None
@@ -340,7 +344,9 @@ def get_budget_goal_suggestions(db: Session, user_id: str, budget_id: str) -> di
                 "suggestion_type": "trend_correction",
                 "title": "Reduce daily burn rate",
                 "message": f"Current burn rate is Rs {burn_rate:.0f}/day. Reduce by Rs {max(0.0, burn_rate - daily_limit):.0f}/day to stay on track.",
-                "estimated_savings": max(0.0, (burn_rate - daily_limit) * status["days_left"]),
+                "estimated_savings": max(
+                    0.0, (burn_rate - daily_limit) * status["days_left"]
+                ),
                 "priority": "high",
             }
         )
@@ -354,6 +360,19 @@ def get_budget_goal_suggestions(db: Session, user_id: str, budget_id: str) -> di
             "priority": "medium",
         }
     )
+
+    suggestions.append(
+        {
+            "suggestion_type": "weekly_check",
+            "title": "Set a mid-period check-in",
+            "message": "Schedule a weekly review to compare actual spend vs target and correct early.",
+            "estimated_savings": round(max(25.0, status["budget_amount"] * 0.03), 2),
+            "priority": "medium",
+        }
+    )
+
+    # Keep smart suggestions bounded for the client UI.
+    suggestions = suggestions[:4]
 
     return {
         "budget_id": status["budget_id"],
@@ -417,7 +436,9 @@ def get_adaptive_budget_adjustment(
 
     adjustment_percent = Decimal(0)
     if current_budget > 0:
-        adjustment_percent = ((recommended - current_budget) / current_budget) * Decimal(100)
+        adjustment_percent = (
+            (recommended - current_budget) / current_budget
+        ) * Decimal(100)
 
     return {
         "budget_id": str(budget.id),
@@ -464,7 +485,9 @@ def get_budget_period_review(db: Session, user_id: str, budget_id: str) -> dict 
 
     recommended = get_adaptive_budget_adjustment(db, user_id, budget_id)
     next_recommended_budget = (
-        recommended["recommended_budget_amount"] if recommended else float(budget_amount)
+        recommended["recommended_budget_amount"]
+        if recommended
+        else float(budget_amount)
     )
 
     return {
