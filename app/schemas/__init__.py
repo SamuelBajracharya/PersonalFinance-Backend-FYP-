@@ -32,6 +32,12 @@ from .analytics import (
     LineSeriesDataPoint,
     LineSeries,
     PieChartData,
+    ExpenseIncomeGauge,
+    MoMGrowthPoint,
+    DiscretionarySplit,
+    DiscretionarySplitSegment,
+    SavingsRatePoint,
+    SavingsRateTrend,
 )
 from .ai_advisor import AIAdvisorRequest, AIAdvisorResponse
 from .budget import (
@@ -76,6 +82,12 @@ __all__ = [
     "LineSeriesDataPoint",
     "LineSeries",
     "PieChartData",
+    "ExpenseIncomeGauge",
+    "MoMGrowthPoint",
+    "DiscretionarySplit",
+    "DiscretionarySplitSegment",
+    "SavingsRatePoint",
+    "SavingsRateTrend",
     "AIAdvisorRequest",
     "AIAdvisorResponse",
     "Budget",
