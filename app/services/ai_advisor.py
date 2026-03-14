@@ -1,4 +1,5 @@
 import httpx
+import re
 from sqlalchemy.orm import Session
 from app.crud.bank import get_user_transactions_last_30_days
 from app.crud.goal import get_goals_by_user
@@ -8,29 +9,221 @@ from app.config.settings import settings
 from app.services.event_logger import log_event_async
 
 
-def is_greeting(text: str) -> bool:
-    greetings = [
-        "hi",
-        "hello",
-        "hey",
-        "yo",
-        "good morning",
-        "good afternoon",
-        "good evening",
-    ]
-    t = text.lower().strip()
-    return any(t.startswith(g) for g in greetings)
+GREETING_PHRASES = {
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "namaste",
+    "namaskar",
+}
+
+QUESTION_HINT_WORDS = {
+    "how",
+    "what",
+    "why",
+    "when",
+    "where",
+    "which",
+    "should",
+    "can",
+    "could",
+    "help",
+    "save",
+    "saving",
+    "spend",
+    "spending",
+    "budget",
+    "budgeting",
+    "money",
+    "expense",
+    "expenses",
+    "income",
+    "invest",
+    "investment",
+    "loan",
+    "debt",
+}
+
+GREETING_FILLER_WORDS = {
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "good",
+    "morning",
+    "afternoon",
+    "evening",
+    "there",
+    "bro",
+    "sir",
+    "madam",
+    "maam",
+    "namaste",
+    "namaskar",
+}
+
+PROFANITY_WORDS = {
+    "fuck",
+    "fucking",
+    "shit",
+    "bitch",
+    "asshole",
+    "muji",
+    "mugi",
+    "machikne",
+    "randi",
+    "lado",
+}
+
+
+def _extract_words(text: str) -> list[str]:
+    return re.findall(r"[a-zA-Z']+", text.lower())
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.lower().strip(" .,!?:;\t\n")).strip()
+
+
+def is_greeting_only(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+
+    if normalized in GREETING_PHRASES:
+        return True
+
+    words = _extract_words(normalized)
+    if not words:
+        return False
+
+    return all(word in GREETING_FILLER_WORDS for word in words)
+
+
+def is_abusive_only(text: str) -> bool:
+    words = _extract_words(text)
+    if not words:
+        return False
+
+    non_abusive_words = [word for word in words if word not in PROFANITY_WORDS]
+    return len(non_abusive_words) == 0
+
+
+def sanitize_user_prompt(text: str) -> str:
+    words = _extract_words(text)
+    clean_words = [word for word in words if word not in PROFANITY_WORDS]
+    return " ".join(clean_words).strip()
+
+
+def extract_effective_user_query(text: str) -> str:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return ""
+
+    for phrase in sorted(GREETING_PHRASES, key=len, reverse=True):
+        if normalized.startswith(f"{phrase} "):
+            normalized = normalized[len(phrase) :].strip(" ,.!?;:-")
+            break
+
+    words = _extract_words(normalized)
+    filtered_words = [word for word in words if word not in PROFANITY_WORDS]
+    return " ".join(filtered_words).strip()
+
+
+def has_question_intent(text: str) -> bool:
+    lower_text = text.lower()
+    if "?" in lower_text:
+        return True
+
+    words = set(_extract_words(lower_text))
+    if not words:
+        return False
+
+    return len(words.intersection(QUESTION_HINT_WORDS)) > 0
 
 
 async def generate_advice(
     db: Session, user_id: str, user_prompt: str
 ) -> AIAdvisorResponse:
 
+    effective_prompt = extract_effective_user_query(user_prompt)
+
+    if is_greeting_only(user_prompt):
+        greeting_reply = "Hello! I can help with budgeting, saving, and spending questions whenever you're ready."
+
+        log_event_async(
+            None,
+            user_id,
+            "advice_generated",
+            "ai_advice",
+            user_id,
+            {
+                "user_prompt": user_prompt,
+                "summary": "Greeting-only message. No financial context used.",
+                "advice": greeting_reply,
+            },
+        )
+
+        return AIAdvisorResponse(
+            summary="Greeting-only message. No financial context used.",
+            advice=greeting_reply,
+            raw_model_output=greeting_reply,
+        )
+
+    if is_abusive_only(user_prompt):
+        boundary_reply = (
+            "I can help with your money questions, but please use respectful language."
+        )
+
+        log_event_async(
+            None,
+            user_id,
+            "advice_generated",
+            "ai_advice",
+            user_id,
+            {
+                "user_prompt": user_prompt,
+                "summary": "Abusive-only message. No financial context used.",
+                "advice": boundary_reply,
+            },
+        )
+
+        return AIAdvisorResponse(
+            summary="Abusive-only message. No financial context used.",
+            advice=boundary_reply,
+            raw_model_output=boundary_reply,
+        )
+
+    if not effective_prompt or not has_question_intent(effective_prompt):
+        follow_up_reply = "I can help with saving, budgeting, and spending plans. Tell me your exact money goal or question."
+
+        log_event_async(
+            None,
+            user_id,
+            "advice_generated",
+            "ai_advice",
+            user_id,
+            {
+                "user_prompt": user_prompt,
+                "summary": "No actionable financial question detected.",
+                "advice": follow_up_reply,
+            },
+        )
+
+        return AIAdvisorResponse(
+            summary="No actionable financial question detected.",
+            advice=follow_up_reply,
+            raw_model_output=follow_up_reply,
+        )
+
     transactions = get_user_transactions_last_30_days(db, user_id)
     goals = get_goals_by_user(db, user_id)
 
     if not transactions:
-        overview = "No transactions found for the last 7 days."
+        overview = "No transactions found for the last 30 days."
     else:
         total_income = sum(t.amount for t in transactions if t.type == "CREDIT")
         total_expenses = sum(t.amount for t in transactions if t.type == "DEBIT")
@@ -69,62 +262,46 @@ async def generate_advice(
                 f"(Deadline: {goal.deadline}, Status: {goal.status.value}, Progress: {progress:.1f}%)\n"
             )
 
-    # -------------------------------
-    # GREETING MODE
-    # -------------------------------
-    if is_greeting(user_prompt):
-        system_prompt = (
-            "You are a friendly financial assistant.\n"
-            "If the user is greeting you, reply with:\n\n"
-            "1) A short warm greeting\n"
-            "2) A single sentence letting them know you can help with financial questions\n\n"
-            "Do NOT provide financial advice in greeting replies.\n"
-            "Do NOT mention numbers or transactions.\n"
-            "Keep it simple and supportive.\n\n"
-            f"User message:\n{user_prompt}"
-        )
-
-    # -------------------------------
-    # ADVICE MODE (STRUCTURED OUTPUT)
-    # -------------------------------
-    else:
-        system_prompt = (
-            "You are a supportive financial coach.\n"
-            "Use the financial overview only as context.\n"
-            "Give direct, practical advice based on:\n"
-            "- the spending trends\n"
-            "- the user's question\n\n"
-            "STRICT OUTPUT FORMAT RULES:\n"
-            "Return your answer in a clean structured layout.\n"
-            "Follow this exact format:\n\n"
-            "1) <Short Heading>\n"
-            "• bullet point\n"
-            "• bullet point\n"
-            "• bullet point\n\n"
-            "---\n\n"
-            "2) <Short Heading>\n"
-            "• bullet point\n"
-            "• bullet point\n\n"
-            "---\n\n"
-            "3) <Short Heading>\n"
-            "• bullet point\n"
-            "• bullet point\n\n"
-            "Formatting rules:\n"
-            "- Keep bullets short and readable\n"
-            "- Each bullet must be on a new line\n"
-            "- Put a line separator `---` between sections\n"
-            "- Do NOT return long paragraphs\n"
-            "- Do NOT reframe the user's question\n"
-            "- Do NOT repeat the financial overview text\n\n"
-            "---BEGIN DATA---\n"
-            "Financial overview (30 days):\n"
-            f"{overview}\n\n"
-            "Goals overview:\n"
-            f"{goals_overview}\n\n"
-            "User question:\n"
-            f"{user_prompt}\n"
-            "---END DATA---"
-        )
+    system_prompt = (
+        "You are a supportive financial coach.\n"
+        "Use the financial overview only as context.\n"
+        "If a message contains a greeting plus a money question, answer the money question.\n"
+        "Treat casual greetings and profanity as conversational noise unless they are the full message.\n"
+        "Never interpret profanity/slang as product, brand, or merchant intent.\n"
+        "Give direct, practical advice based on:\n"
+        "- the spending trends\n"
+        "- the user's question\n\n"
+        "STRICT OUTPUT FORMAT RULES:\n"
+        "Return your answer in a clean structured layout.\n"
+        "Follow this exact format:\n\n"
+        "1) <Short Heading>\n"
+        "• bullet point\n"
+        "• bullet point\n"
+        "• bullet point\n\n"
+        "---\n\n"
+        "2) <Short Heading>\n"
+        "• bullet point\n"
+        "• bullet point\n\n"
+        "---\n\n"
+        "3) <Short Heading>\n"
+        "• bullet point\n"
+        "• bullet point\n\n"
+        "Formatting rules:\n"
+        "- Keep bullets short and readable\n"
+        "- Each bullet must be on a new line\n"
+        "- Put a line separator `---` between sections\n"
+        "- Do NOT return long paragraphs\n"
+        "- Do NOT reframe the user's question\n"
+        "- Do NOT repeat the financial overview text\n\n"
+        "---BEGIN DATA---\n"
+        "Financial overview (30 days):\n"
+        f"{overview}\n\n"
+        "Goals overview:\n"
+        f"{goals_overview}\n\n"
+        "User question:\n"
+        f"{effective_prompt}\n"
+        "---END DATA---"
+    )
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
