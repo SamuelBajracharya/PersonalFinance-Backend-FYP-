@@ -72,19 +72,26 @@ def get_budget_by_category_and_user_and_date(
 
 
 def create_budget(db: Session, budget: BudgetCreate, user_id: str):
-    # Enforce budget creation rule
+    # Enforce budget creation rule using projected 30-day spend pace for this month.
     current_month_spending = get_total_spending_for_category_and_month(
         db, user_id, budget.category, budget.start_date.year, budget.start_date.month
     )
 
-    if not (
-        current_month_spending - 1000
-        <= budget.budget_amount
-        <= current_month_spending + 1000
-    ):
+    days_elapsed_in_month = max(1, budget.start_date.day)
+    current_month_spending_decimal = Decimal(str(current_month_spending))
+    projected_30_day_max = (
+        current_month_spending_decimal / Decimal(days_elapsed_in_month)
+    ) * Decimal(30)
+    max_allowed_budget = projected_30_day_max + Decimal(1000)
+
+    if budget.budget_amount > max_allowed_budget:
         raise HTTPException(
             status_code=400,
-            detail=f"Budget for category '{budget.category}' must be within ± Rs 1000 of current month's spending (Rs {current_month_spending:.2f}).",
+            detail=(
+                f"Budget for category '{budget.category}' exceeds the 30-day projected limit "
+                f"based on this month's average daily spend (+ Rs 1000 buffer). "
+                f"Max allowed: Rs {max_allowed_budget:.2f}."
+            ),
         )
 
     db_budget = Budget(**budget.dict(), user_id=user_id)
