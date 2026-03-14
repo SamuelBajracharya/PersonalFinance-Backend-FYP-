@@ -23,6 +23,14 @@ def get_financial_analytics(
         "30d", description="Time horizon: 7d, 30d, 90d, calendar_month"
     ),
     year: int = Query(None, description="Year for monthly analytics (e.g. 2025)"),
+    startDate: str = Query(
+        None,
+        description="ISO start date for analytics filter (e.g. 2025-12-24T18:15:00.000Z)",
+    ),
+    endDate: str = Query(
+        None,
+        description="ISO end date for analytics filter (e.g. 2025-12-31T18:14:59.999Z)",
+    ),
 ):
     # Verify account ownership using external_account_id
     db_bank_account = (
@@ -76,20 +84,31 @@ def get_financial_analytics(
     # Use timezone-aware UTC for all date operations
     now = datetime.now(timezone.utc)
 
-    # Determine start_date and end_date based on time_horizon
-    if time_horizon == "7d":
-        start_date = now - pd.Timedelta(days=6)
-    elif time_horizon == "30d":
-        start_date = now - pd.Timedelta(days=29)
-    elif time_horizon == "90d":
-        start_date = now - pd.Timedelta(days=89)
-    elif time_horizon == "calendar_month":
-        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    # Parse startDate and endDate if provided
+    if startDate and endDate:
+        try:
+            start_date = pd.to_datetime(startDate).tz_convert(timezone.utc)
+            end_date = pd.to_datetime(endDate).tz_convert(timezone.utc)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid startDate or endDate format. Use ISO format.",
+            )
     else:
-        start_date = now - pd.Timedelta(days=29)
-    end_date = now
+        # Determine start_date and end_date based on time_horizon
+        if time_horizon == "7d":
+            start_date = now - pd.Timedelta(days=6)
+        elif time_horizon == "30d":
+            start_date = now - pd.Timedelta(days=29)
+        elif time_horizon == "90d":
+            start_date = now - pd.Timedelta(days=89)
+        elif time_horizon == "calendar_month":
+            start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            start_date = now - pd.Timedelta(days=29)
+        end_date = now
 
-    # Filter for the selected time horizon
+    # Filter for the selected time horizon or custom dates
     df_horizon = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
 
     # For weekly stats, use current month
@@ -202,6 +221,9 @@ def get_financial_analytics(
     yearlyLineSeries = format_line_series_data(df.groupby(df["date"].dt.year), "yearly")
 
     # Monthly Line Series
+    # Define df_last_12_months using the same date filtering as df_horizon
+    df_last_12_months = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
+
     monthly_income_series = (
         df_last_12_months[df_last_12_months["type"] == "CREDIT"]
         .groupby(df_last_12_months["date"].dt.strftime("%b %Y"))["amount"]
@@ -278,6 +300,12 @@ def get_financial_analytics(
             last_successful_sync is not None
             and last_successful_sync.date() == date.today()
         )
+
+        # Convert to ISO strings for schema
+        if last_successful_sync is not None:
+            last_successful_sync = last_successful_sync.isoformat()
+        if last_attempted_sync is not None:
+            last_attempted_sync = last_attempted_sync.isoformat()
     return schemas.AnalyticsResponse(
         yearlyTransactionData=format_data_for_chart(yearly_transactions),
         monthlyTransactionData=format_data_for_chart(monthly_transactions),
