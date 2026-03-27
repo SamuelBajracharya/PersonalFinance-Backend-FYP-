@@ -16,12 +16,13 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     based on reducing spending in their top 5 highest expenditure categories.
     """
 
-    # Calculate rolling 1-month window (e.g., 27 Feb to 26 Mar if today is 27 Mar)
+    # Calculate previous full calendar month
     today = datetime.utcnow().date()
-    start_date = today - timedelta(days=30)
-    end_date = today  # exclusive upper bound
+    first_of_this_month = today.replace(day=1)
+    last_month_end = first_of_this_month - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
 
-    # Aggregate user's expenses by category for the last 30 days
+    # Aggregate user's expenses by category for the previous full calendar month
     expenses_by_category = (
         db.query(
             Transaction.category,
@@ -31,8 +32,8 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
             Transaction.user_id == user.user_id,
             Transaction.type == "DEBIT",
             Transaction.category.isnot(None),
-            Transaction.date >= datetime.combine(start_date, datetime.min.time()),
-            Transaction.date < datetime.combine(end_date, datetime.min.time()),
+            Transaction.date >= datetime.combine(last_month_start, datetime.min.time()),
+            Transaction.date <= datetime.combine(last_month_end, datetime.max.time()),
         )
         .group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -42,8 +43,8 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     if not expenses_by_category:
         return []
 
-    # Only include categories that actually have expenses in this period (could be less than 5)
-    top_categories = expenses_by_category[:5]
+    # Only include categories that actually have expenses in this period (could be less than 4)
+    top_categories = expenses_by_category[:4]
 
     # Define smart percentage assignment rules (Category Caps)
     category_percentage_map = {
