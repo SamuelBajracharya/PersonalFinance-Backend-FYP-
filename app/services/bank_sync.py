@@ -113,8 +113,17 @@ async def login_and_sync_all_accounts(
         async with httpx.AsyncClient() as client:
             try:
                 if bank_token:
+                    # Fetch user_id from /users/me/
+                    user_info_response = await client.get(
+                        f"{EXTERNAL_BANK_API_BASE_URL}/users/me/",
+                        headers={"Authorization": f"Bearer {bank_token}"},
+                    )
+                    user_info_response.raise_for_status()
+                    user_id_kosh = user_info_response.json()["user_id"]
+
+                    # Fetch accounts for this user
                     accounts_response = await client.get(
-                        f"{EXTERNAL_BANK_API_BASE_URL}/accounts",
+                        f"{EXTERNAL_BANK_API_BASE_URL}/users/{user_id_kosh}/accounts",
                         headers={"Authorization": f"Bearer {bank_token}"},
                     )
                     accounts_response.raise_for_status()
