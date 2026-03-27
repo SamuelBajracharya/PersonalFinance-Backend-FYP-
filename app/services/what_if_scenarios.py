@@ -16,7 +16,12 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     based on reducing spending in their top 5 highest expenditure categories.
     """
 
-    # 1. Aggregate the user's expenses for all time by category (no 30-day filter)
+    # Calculate rolling 1-month window (e.g., 27 Feb to 26 Mar if today is 27 Mar)
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=30)
+    end_date = today  # exclusive upper bound
+
+    # Aggregate user's expenses by category for the last 30 days
     expenses_by_category = (
         db.query(
             Transaction.category,
@@ -26,6 +31,8 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
             Transaction.user_id == user.user_id,
             Transaction.type == "DEBIT",
             Transaction.category.isnot(None),
+            Transaction.date >= datetime.combine(start_date, datetime.min.time()),
+            Transaction.date < datetime.combine(end_date, datetime.min.time()),
         )
         .group_by(Transaction.category)
         .order_by(func.sum(Transaction.amount).desc())
@@ -35,8 +42,8 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     if not expenses_by_category:
         return []
 
-    # Select the top 5 categories in the last 30 days
-    top_5_categories = expenses_by_category[:4]
+    # Only include categories that actually have expenses in this period (could be less than 5)
+    top_categories = expenses_by_category[:5]
 
     # Define smart percentage assignment rules (Category Caps)
     category_percentage_map = {
@@ -55,41 +62,26 @@ def get_what_if_scenarios(db: Session, user: User) -> list[WhatIfScenario]:
     }
 
     scenarios = []
-    for category, total_spent in top_5_categories:
-        history = get_monthly_spending_history(db, user.user_id, category)
-        months_of_data = 0
-        if history["avg_spend"] > 0:
-            months_of_data = 1
-        if history["avg_spend"] > 0 and history["min_spend"] != history["avg_spend"]:
-            months_of_data = 2
-
-        # Get the category-based cap
-        category_cap = 40  # Default cap
-        for cat_keyword, percentage in category_percentage_map.items():
-            if cat_keyword in category.lower():
-                category_cap = percentage
-                break
-
-        if months_of_data == 1:
-            # Only one month of data, use default reduction
-            effective_reduction_percentage = min(10, category_cap)
-        elif months_of_data >= 2:
-            # Use historical reduction logic
-            historical_reduction_rate = (
-                history["avg_spend"] - history["min_spend"]
-            ) / history["avg_spend"]
-            if historical_reduction_rate <= 0:
-                continue
-            effective_reduction_percentage = min(
-                historical_reduction_rate * 100, category_cap
-            )
+    for category, total_spent in top_categories:
+        # Only include categories with positive spending
+        if not total_spent or float(total_spent) <= 0:
+            continue
+        # For "food" use 10% reduction, otherwise use category cap or 10% as default
+        if "food" in category.lower():
+            effective_reduction_percentage = 10
         else:
-            continue  # No data at all, skip
+            # Use category cap if defined, else 10%
+            category_cap = 10
+            for cat_keyword, percentage in category_percentage_map.items():
+                if cat_keyword in category.lower():
+                    category_cap = percentage
+                    break
+            effective_reduction_percentage = category_cap
 
         monthly_savings = round(
             float(total_spent * effective_reduction_percentage) / 100, 2
         )
-        new_budget = round(float(total_spent) - monthly_savings, 2)
+        new_budget = int(round(float(total_spent) - monthly_savings))
         message = (
             f"If you cut {int(effective_reduction_percentage)}% from {category} "
             f"you could save Rs{int(monthly_savings)}/month!"

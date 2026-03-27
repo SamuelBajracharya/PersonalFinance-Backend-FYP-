@@ -35,6 +35,11 @@ def create_budget(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if budget.budget_amount < 500:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Budget amount must be at least 500.",
+        )
     start_date = date.today()
     end_date = start_date + timedelta(days=30)
 
@@ -49,12 +54,6 @@ def create_budget(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A budget for this category and month already exists.",
-        )
-
-    if budget.budget_amount <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Budget amount must be positive.",
         )
 
     db_budget = crud.budget.create_budget(

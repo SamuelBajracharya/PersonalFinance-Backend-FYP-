@@ -18,8 +18,9 @@ def get_financial_analytics(
     external_id: str,  # Now string for external_account_id
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    time_horizon: str = Query(
-        "30d", description="Time horizon: 7d, 30d, 90d, calendar_month"
+    time_horizon: str | None = Query(
+        None,
+        description="Time horizon: 1m/30d, 3m/90d, 1y/year (all years), 7d, calendar_month",
     ),
     year: int = Query(None, description="Year for monthly analytics (e.g. 2025)"),
     startDate: str = Query(
@@ -85,39 +86,60 @@ def get_financial_analytics(
     df["amount"] = df["amount"].astype(float)
 
     # Use timezone-aware UTC for all date operations
-    now = datetime.now(timezone.utc)
+    now = pd.Timestamp(datetime.now(timezone.utc))
 
-    # Parse startDate and endDate if provided
+    def to_utc_timestamp(value: str) -> pd.Timestamp:
+        ts = pd.to_datetime(value)
+        return (
+            ts.tz_localize(timezone.utc)
+            if ts.tzinfo is None
+            else ts.tz_convert(timezone.utc)
+        )
+
+    normalized_horizon = (time_horizon or "").strip().lower()
+
+    # Determine unified window used by ALL analytics charts.
     if startDate and endDate:
         try:
-            start_date = pd.to_datetime(startDate).tz_convert(timezone.utc)
-            end_date = pd.to_datetime(endDate).tz_convert(timezone.utc)
+            start_date = to_utc_timestamp(startDate)
+            end_date = to_utc_timestamp(endDate)
         except Exception:
             raise HTTPException(
                 status_code=400,
                 detail="Invalid startDate or endDate format. Use ISO format.",
             )
-    else:
-        # Determine start_date and end_date based on time_horizon
-        if time_horizon == "7d":
-            start_date = now - pd.Timedelta(days=6)
-        elif time_horizon == "30d":
-            start_date = now - pd.Timedelta(days=29)
-        elif time_horizon == "90d":
-            start_date = now - pd.Timedelta(days=89)
-        elif time_horizon == "calendar_month":
-            start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        else:
-            start_date = now - pd.Timedelta(days=29)
+    elif year is not None:
+        start_date = pd.Timestamp(year=year, month=1, day=1, tz=timezone.utc)
+        end_date = pd.Timestamp(
+            year=year, month=12, day=31, hour=23, minute=59, second=59, tz=timezone.utc
+        )
+    elif normalized_horizon in {"", "1y", "year", "all", "all_years"}:
+        # No explicit selection defaults to all available years in data.
+        start_date = df["date"].min()
+        end_date = df["date"].max()
+    elif normalized_horizon in {"3m", "90d"}:
         end_date = now
+        start_date = end_date - pd.DateOffset(months=3)
+    elif normalized_horizon in {"1m", "30d"}:
+        end_date = now
+        start_date = end_date - pd.Timedelta(days=29)
+    elif normalized_horizon == "7d":
+        end_date = now
+        start_date = end_date - pd.Timedelta(days=6)
+    elif normalized_horizon == "calendar_month":
+        end_date = now
+        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        end_date = now
+        start_date = end_date - pd.Timedelta(days=29)
 
-    # Filter for the selected time horizon or custom dates
-    df_horizon = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
+    if end_date < start_date:
+        raise HTTPException(
+            status_code=400, detail="endDate must be on or after startDate"
+        )
 
-    # For weekly stats, use current month
-    df_current_month = df[
-        (df["date"].dt.year == now.year) & (df["date"].dt.month == now.month)
-    ]
+    # Filter for the selected unified horizon.
+    df_window = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
 
     # --- Helper Functions ---
     def format_data_for_chart(series):
@@ -226,19 +248,24 @@ def get_financial_analytics(
         return "discretionary"
 
     # --- Monthly Data Calculation ---
-    # If a year is specified, filter df for that year for monthly analytics
     if year is not None:
-        df_monthly = df[df["date"].dt.year == year]
+        df_monthly = df_window
         # Create labels for all months in the selected year
         all_months_labels = [
             pd.Timestamp(year=year, month=m, day=1).strftime("%b %Y")
             for m in range(1, 13)
         ]
     else:
-        df_monthly = df
-        # Default: last 12 months from start_date to end_date
+        df_monthly = df_window
+        labels_start = pd.Timestamp(start_date).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        labels_end = pd.Timestamp(end_date).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        # Use months fully covering the selected window.
         all_months_labels = (
-            pd.date_range(start=start_date, end=end_date, freq="MS")
+            pd.date_range(start=labels_start, end=labels_end, freq="MS")
             .strftime("%b %Y")
             .tolist()
         )
@@ -250,7 +277,9 @@ def get_financial_analytics(
 
     # --- Transaction (Debit) Data ---
     yearly_transactions = (
-        df[df["type"] == "DEBIT"].groupby(df["date"].dt.year)["amount"].sum()
+        df_window[df_window["type"] == "DEBIT"]
+        .groupby(df_window["date"].dt.year)["amount"]
+        .sum()
     )
 
     # Group by 'Month YYYY' string format
@@ -262,8 +291,8 @@ def get_financial_analytics(
         )
     else:
         monthly_transactions_series = (
-            df_horizon[df_horizon["type"] == "DEBIT"]
-            .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
+            df_window[df_window["type"] == "DEBIT"]
+            .groupby(df_window["date"].dt.strftime("%b %Y"))["amount"]
             .sum()
         )
     monthly_transactions = process_monthly_data(
@@ -271,14 +300,16 @@ def get_financial_analytics(
     )
 
     weekly_transactions = (
-        df_current_month[df_current_month["type"] == "DEBIT"]
-        .groupby(df_current_month["date"].dt.isocalendar().week)["amount"]
+        df_window[df_window["type"] == "DEBIT"]
+        .groupby(df_window["date"].dt.strftime("%G-W%V"))["amount"]
         .sum()
     )
 
     # --- Balance (Credit) Data ---
     yearly_balance = (
-        df[df["type"] == "CREDIT"].groupby(df["date"].dt.year)["amount"].sum()
+        df_window[df_window["type"] == "CREDIT"]
+        .groupby(df_window["date"].dt.year)["amount"]
+        .sum()
     )
 
     if year is not None:
@@ -289,24 +320,26 @@ def get_financial_analytics(
         )
     else:
         monthly_balance_series = (
-            df_horizon[df_horizon["type"] == "CREDIT"]
-            .groupby(df_horizon["date"].dt.strftime("%b %Y"))["amount"]
+            df_window[df_window["type"] == "CREDIT"]
+            .groupby(df_window["date"].dt.strftime("%b %Y"))["amount"]
             .sum()
         )
     monthly_balance = process_monthly_data(monthly_balance_series, all_months_labels)
 
     weekly_balance = (
-        df_current_month[df_current_month["type"] == "CREDIT"]
-        .groupby(df_current_month["date"].dt.isocalendar().week)["amount"]
+        df_window[df_window["type"] == "CREDIT"]
+        .groupby(df_window["date"].dt.strftime("%G-W%V"))["amount"]
         .sum()
     )
 
     # --- Line Series ---
-    yearlyLineSeries = format_line_series_data(df.groupby(df["date"].dt.year), "yearly")
+    yearlyLineSeries = format_line_series_data(
+        df_window.groupby(df_window["date"].dt.year), "yearly"
+    )
 
     # Monthly Line Series
-    # Define df_last_12_months using the same date filtering as df_horizon
-    df_last_12_months = df[(df["date"] >= start_date) & (df["date"] <= end_date)].copy()
+    # Monthly line series uses the same unified selected window.
+    df_last_12_months = df_window.copy()
 
     monthly_income_series = (
         df_last_12_months[df_last_12_months["type"] == "CREDIT"]
@@ -336,17 +369,16 @@ def get_financial_analytics(
         schemas.LineSeries(id="monthly_expense", data=expense_points),
     ]
 
-    weeklyLineSeries = format_line_series_data(
-        df_current_month.groupby(df_current_month["date"].dt.isocalendar().week),
-        "weekly",
-    )
+    df_weekly = df_window.copy()
+    df_weekly["year_week"] = df_weekly["date"].dt.strftime("%G-W%V")
+    weeklyLineSeries = format_line_series_data(df_weekly.groupby("year_week"), "weekly")
 
     # --- Pie Charts ---
     pieExpense = [
         schemas.PieChartData(
             id=category, label=category, value=round(Decimal(amount), 2)
         )
-        for category, amount in df[df["type"] == "DEBIT"]
+        for category, amount in df_window[df_window["type"] == "DEBIT"]
         .groupby("category")["amount"]
         .sum()
         .nlargest(5)
@@ -357,7 +389,7 @@ def get_financial_analytics(
         schemas.PieChartData(
             id=category, label=category, value=round(Decimal(amount), 2)
         )
-        for category, amount in df[df["type"] == "CREDIT"]
+        for category, amount in df_window[df_window["type"] == "CREDIT"]
         .groupby("category")["amount"]
         .sum()
         .nlargest(5)
@@ -365,8 +397,8 @@ def get_financial_analytics(
     ]
 
     # --- New Advisor-Focused Charts ---
-    total_income = float(df_horizon[df_horizon["type"] == "CREDIT"]["amount"].sum())
-    total_expense = float(df_horizon[df_horizon["type"] == "DEBIT"]["amount"].sum())
+    total_income = float(df_window[df_window["type"] == "CREDIT"]["amount"].sum())
+    total_expense = float(df_window[df_window["type"] == "DEBIT"]["amount"].sum())
     ratio_pct = (total_expense / total_income * 100) if total_income > 0 else 0.0
 
     if ratio_pct >= 90:
@@ -387,16 +419,14 @@ def get_financial_analytics(
         advisorInsight=gauge_insight,
     )
 
-    if year is not None:
-        trend_start = pd.Timestamp(year=year, month=1, day=1, tz=timezone.utc)
-        trend_end = pd.Timestamp(year=year, month=12, day=31, tz=timezone.utc)
-    else:
-        trend_end = pd.Timestamp(end_date)
-        if trend_end.tzinfo is None:
-            trend_end = trend_end.tz_localize(timezone.utc)
-        trend_start = (trend_end - pd.DateOffset(months=11)).replace(day=1)
+    trend_start = pd.Timestamp(start_date).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    trend_end = pd.Timestamp(end_date)
+    if trend_end.tzinfo is None:
+        trend_end = trend_end.tz_localize(timezone.utc)
 
-    df_trend = df[(df["date"] >= trend_start) & (df["date"] <= trend_end)].copy()
+    df_trend = df_window.copy()
     month_labels = (
         pd.date_range(start=trend_start, end=trend_end, freq="MS")
         .strftime("%b %Y")
@@ -467,7 +497,7 @@ def get_financial_analytics(
         schemas.LineSeries(id="mom_expense_growth_pct", data=expense_growth_points),
     ]
 
-    debit_df = df_horizon[df_horizon["type"] == "DEBIT"].copy()
+    debit_df = df_window[df_window["type"] == "DEBIT"].copy()
     if debit_df.empty:
         discretionary_total = 0.0
         non_discretionary_total = 0.0
