@@ -20,7 +20,7 @@ def get_financial_analytics(
     current_user: User = Depends(get_current_user),
     time_horizon: str | None = Query(
         None,
-        description="Time horizon: 1m/30d, 3m/90d, 1y/year (all years), 7d, calendar_month",
+        description="Time horizon: 1m/30d/calendar_month (4 weeks), 3m/90d, 1y/year (all years), 7d",
     ),
     year: int = Query(None, description="Year for monthly analytics (e.g. 2025)"),
     startDate: str = Query(
@@ -120,18 +120,15 @@ def get_financial_analytics(
     elif normalized_horizon in {"3m", "90d"}:
         end_date = now
         start_date = end_date - pd.DateOffset(months=3)
-    elif normalized_horizon in {"1m", "30d"}:
+    elif normalized_horizon in {"1m", "30d", "calendar_month"}:
         end_date = now
-        start_date = end_date - pd.Timedelta(days=29)
+        start_date = end_date - pd.Timedelta(days=27)
     elif normalized_horizon == "7d":
         end_date = now
         start_date = end_date - pd.Timedelta(days=6)
-    elif normalized_horizon == "calendar_month":
-        end_date = now
-        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     else:
         end_date = now
-        start_date = end_date - pd.Timedelta(days=29)
+        start_date = end_date - pd.Timedelta(days=27)
 
     if end_date < start_date:
         raise HTTPException(

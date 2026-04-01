@@ -20,9 +20,10 @@ def generate_and_store_predictions_for_user(
         return
     from app.models.daily_prediction import DailyPrediction
 
-    # Map time_horizon to look_back days for inference
-    look_back_map = {"7d": 7, "30d": 30, "90d": 90, "calendar_month": 30}
-    look_back = look_back_map.get(time_horizon, 30)
+    # Map time_horizon to look_back days for inference.
+    # Monthly horizons are fixed to 4 weeks.
+    look_back_map = {"7d": 7, "30d": 28, "90d": 90, "calendar_month": 28}
+    look_back = look_back_map.get(time_horizon, 28)
 
     for budget in budgets:
         try:

@@ -130,7 +130,8 @@ def _format_line_series_data(groups, prefix: str) -> list[LineSeries]:
 
 def _month_window(now: datetime) -> tuple[pd.Timestamp, pd.Timestamp]:
     month_end = pd.Timestamp(now)
-    month_start = (month_end - relativedelta(months=1)).replace(
+    # Use a fixed 4-week horizon for monthly dashboard calculations.
+    month_start = (month_end - pd.Timedelta(days=27)).replace(
         hour=0,
         minute=0,
         second=0,
@@ -153,30 +154,47 @@ def _year_window(now: datetime) -> tuple[pd.Timestamp, pd.Timestamp]:
 def _build_monthly_line_series(
     df_month: pd.DataFrame, month_start: pd.Timestamp, month_end: pd.Timestamp
 ) -> list[LineSeries]:
-    day_range = pd.date_range(
-        start=month_start.normalize(), end=month_end.normalize(), freq="D"
-    )
+    week_labels = ["Week 1", "Week 2", "Week 3", "Week 4"]
+
+    if df_month.empty:
+        income_points = [
+            LineSeriesDataPoint(x=label, y="0.00") for label in week_labels
+        ]
+        expense_points = [
+            LineSeriesDataPoint(x=label, y="0.00") for label in week_labels
+        ]
+        return [
+            LineSeries(id="monthly_income", data=income_points),
+            LineSeries(id="monthly_expense", data=expense_points),
+        ]
+
+    df_month = df_month.copy()
+    start_day = month_start.normalize()
+    day_delta = (df_month["date"].dt.normalize() - start_day).dt.days
+    # Fixed 28-day window split into four 7-day buckets.
+    df_month["week_index"] = (day_delta // 7) + 1
+    df_month["week_index"] = df_month["week_index"].clip(lower=1, upper=4)
 
     monthly_income = (
         df_month[df_month["type"] == "CREDIT"]
-        .groupby(df_month["date"].dt.strftime("%Y-%m-%d"))["amount"]
+        .groupby("week_index")["amount"]
         .sum()
-        .reindex(day_range.strftime("%Y-%m-%d"), fill_value=0)
+        .reindex([1, 2, 3, 4], fill_value=0)
     )
     monthly_expenses = (
         df_month[df_month["type"] == "DEBIT"]
-        .groupby(df_month["date"].dt.strftime("%Y-%m-%d"))["amount"]
+        .groupby("week_index")["amount"]
         .sum()
-        .reindex(day_range.strftime("%Y-%m-%d"), fill_value=0)
+        .reindex([1, 2, 3, 4], fill_value=0)
     )
 
     income_points = [
-        LineSeriesDataPoint(x=str(label), y=f"{value:.2f}")
-        for label, value in monthly_income.items()
+        LineSeriesDataPoint(x=week_labels[i - 1], y=f"{value:.2f}")
+        for i, value in monthly_income.items()
     ]
     expense_points = [
-        LineSeriesDataPoint(x=str(label), y=f"{value:.2f}")
-        for label, value in monthly_expenses.items()
+        LineSeriesDataPoint(x=week_labels[i - 1], y=f"{value:.2f}")
+        for i, value in monthly_expenses.items()
     ]
 
     return [
@@ -347,7 +365,7 @@ def _recent_transactions(transactions) -> list[RecentTransactionItem]:
     )
 
     result: list[RecentTransactionItem] = []
-    for tx in sorted_transactions[:5]:
+    for tx in sorted_transactions[:6]:
         result.append(
             RecentTransactionItem(
                 id=str(tx.id),
