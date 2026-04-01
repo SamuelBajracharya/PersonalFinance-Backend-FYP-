@@ -1,27 +1,372 @@
+from datetime import datetime, timezone
+from decimal import Decimal
+
+import httpx
+import pandas as pd
+from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from app.utils.deps import get_db, get_current_user
-from app.models.user import User
+
+from app import crud
+from app.config.settings import settings
+from app.crud.budget import get_budgets_by_user, update_completed_budgets_for_user
+from app.crud.stock_instrument import get_stock_instruments_by_user
 from app.models.bank import BankAccount
+from app.models.user import User
 from app.schemas.dashboard import (
+    AISuggestionItem,
+    BudgetGoalItem,
+    DashboardAISuggestionsResponse,
     DashboardResponse,
-    SummaryData,
+    ExpenseCategoryChartItem,
     LineSeries,
     LineSeriesDataPoint,
+    RecentTransactionItem,
+    StockItem,
+    SummaryData,
 )
-from typing import List
 from app.services.reward_evaluation import evaluate_rewards
-from app.crud.budget import update_completed_budgets_for_user
-import pandas as pd
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-import calendar
-from decimal import Decimal
-from app import crud
-
-import pytz # Import pytz for timezone handling
+from app.utils.deps import get_current_user, get_db
 
 router = APIRouter()
+
+
+def _to_decimal_str(value: float | Decimal) -> str:
+    return f"{Decimal(str(value)):.2f}"
+
+
+def _build_fallback_suggestions(
+    top_expense_categories: list[tuple[str, float]],
+) -> list[AISuggestionItem]:
+    suggestions: list[AISuggestionItem] = []
+    for category, amount in top_expense_categories:
+        text = (
+            f"Your spending on {category} is high (Rs. {amount:.2f}). "
+            "Set a weekly cap and cut at least 10% from non-essential purchases in this category."
+        )
+        suggestions.append(AISuggestionItem(category=category, suggestion=text))
+    return suggestions
+
+
+async def _generate_ai_suggestions(
+    top_expense_categories: list[tuple[str, float]],
+) -> list[AISuggestionItem]:
+    if not top_expense_categories:
+        return []
+
+    category_lines = "\n".join(
+        [
+            f"- {category}: Rs. {amount:.2f}"
+            for category, amount in top_expense_categories
+        ]
+    )
+
+    prompt = (
+        "You are a financial coach.\n"
+        "Create exactly 3 concise spending suggestions based only on these top expense categories.\n"
+        "Return exactly 3 lines in this format: <category>|<suggestion>.\n"
+        "No numbering. No extra text.\n\n"
+        "Top expense categories:\n"
+        f"{category_lines}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                settings.OLLAMA_API_URL,
+                json={
+                    "model": "phi3:mini",
+                    "prompt": prompt,
+                    "stream": False,
+                },
+            )
+            response.raise_for_status()
+
+        raw_output = response.json().get("response", "")
+        parsed: list[AISuggestionItem] = []
+        valid_categories = {
+            category.lower(): category for category, _ in top_expense_categories
+        }
+
+        for line in raw_output.splitlines():
+            if "|" not in line:
+                continue
+            category_part, suggestion_part = line.split("|", 1)
+            category = category_part.strip()
+            suggestion = suggestion_part.strip()
+            if not category or not suggestion:
+                continue
+
+            normalized = category.lower()
+            if normalized in valid_categories:
+                category = valid_categories[normalized]
+
+            parsed.append(AISuggestionItem(category=category, suggestion=suggestion))
+
+        if len(parsed) >= 3:
+            return parsed[:3]
+    except Exception:
+        pass
+
+    return _build_fallback_suggestions(top_expense_categories)
+
+
+def _format_line_series_data(groups, prefix: str) -> list[LineSeries]:
+    income_points: list[LineSeriesDataPoint] = []
+    expense_points: list[LineSeriesDataPoint] = []
+
+    for label, group in groups:
+        income = group[group["type"] == "CREDIT"]["amount"].sum()
+        expense = group[group["type"] == "DEBIT"]["amount"].sum()
+
+        income_points.append(LineSeriesDataPoint(x=str(label), y=f"{income:.2f}"))
+        expense_points.append(LineSeriesDataPoint(x=str(label), y=f"{expense:.2f}"))
+
+    return [
+        LineSeries(id=f"{prefix}_income", data=income_points),
+        LineSeries(id=f"{prefix}_expense", data=expense_points),
+    ]
+
+
+def _month_window(now: datetime) -> tuple[pd.Timestamp, pd.Timestamp]:
+    month_end = pd.Timestamp(now)
+    month_start = (month_end - relativedelta(months=1)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return month_start, month_end
+
+
+def _year_window(now: datetime) -> tuple[pd.Timestamp, pd.Timestamp]:
+    year_end = pd.Timestamp(now)
+    year_start = (year_end - relativedelta(years=1)).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return year_start, year_end
+
+
+def _build_monthly_line_series(
+    df_month: pd.DataFrame, month_start: pd.Timestamp, month_end: pd.Timestamp
+) -> list[LineSeries]:
+    day_range = pd.date_range(
+        start=month_start.normalize(), end=month_end.normalize(), freq="D"
+    )
+
+    monthly_income = (
+        df_month[df_month["type"] == "CREDIT"]
+        .groupby(df_month["date"].dt.strftime("%Y-%m-%d"))["amount"]
+        .sum()
+        .reindex(day_range.strftime("%Y-%m-%d"), fill_value=0)
+    )
+    monthly_expenses = (
+        df_month[df_month["type"] == "DEBIT"]
+        .groupby(df_month["date"].dt.strftime("%Y-%m-%d"))["amount"]
+        .sum()
+        .reindex(day_range.strftime("%Y-%m-%d"), fill_value=0)
+    )
+
+    income_points = [
+        LineSeriesDataPoint(x=str(label), y=f"{value:.2f}")
+        for label, value in monthly_income.items()
+    ]
+    expense_points = [
+        LineSeriesDataPoint(x=str(label), y=f"{value:.2f}")
+        for label, value in monthly_expenses.items()
+    ]
+
+    return [
+        LineSeries(id="monthly_income", data=income_points),
+        LineSeries(id="monthly_expense", data=expense_points),
+    ]
+
+
+def _build_yearly_line_series(
+    df_year: pd.DataFrame, year_start: pd.Timestamp, year_end: pd.Timestamp
+) -> list[LineSeries]:
+    month_range = pd.date_range(
+        start=year_start.normalize(), end=year_end.normalize(), freq="MS"
+    ).to_period("M")
+
+    if df_year.empty:
+        income_points = [
+            LineSeriesDataPoint(x=period.strftime("%b %Y"), y="0.00")
+            for period in month_range
+        ]
+        expense_points = [
+            LineSeriesDataPoint(x=period.strftime("%b %Y"), y="0.00")
+            for period in month_range
+        ]
+        return [
+            LineSeries(id="yearly_income", data=income_points),
+            LineSeries(id="yearly_expense", data=expense_points),
+        ]
+
+    df_year = df_year.copy()
+    df_year["month_year"] = df_year["date"].dt.to_period("M")
+
+    yearly_income = (
+        df_year[df_year["type"] == "CREDIT"]
+        .groupby("month_year")["amount"]
+        .sum()
+        .reindex(month_range, fill_value=0)
+    )
+    yearly_expenses = (
+        df_year[df_year["type"] == "DEBIT"]
+        .groupby("month_year")["amount"]
+        .sum()
+        .reindex(month_range, fill_value=0)
+    )
+
+    income_points = [
+        LineSeriesDataPoint(x=str(period.strftime("%b %Y")), y=f"{value:.2f}")
+        for period, value in yearly_income.items()
+    ]
+    expense_points = [
+        LineSeriesDataPoint(x=str(period.strftime("%b %Y")), y=f"{value:.2f}")
+        for period, value in yearly_expenses.items()
+    ]
+
+    return [
+        LineSeries(id="yearly_income", data=income_points),
+        LineSeries(id="yearly_expense", data=expense_points),
+    ]
+
+
+def _build_expense_category_chart(
+    df_window: pd.DataFrame,
+) -> list[ExpenseCategoryChartItem]:
+    if df_window.empty:
+        return []
+
+    top_expense_series = (
+        df_window[df_window["type"] == "DEBIT"]
+        .groupby("category")["amount"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    return [
+        ExpenseCategoryChartItem(
+            id=category if category else "Uncategorized",
+            label=category if category else "Uncategorized",
+            value=f"{amount:.2f}",
+        )
+        for category, amount in top_expense_series.head(5).items()
+    ]
+
+
+def _top_budget_goals(db: Session, user_id: str) -> list[BudgetGoalItem]:
+    budgets = get_budgets_by_user(db, user_id)
+    ranked: list[tuple[float, BudgetGoalItem]] = []
+
+    for budget in budgets:
+        budget_amount = float(budget.budget_amount or 0)
+        remaining = float(budget.remaining_budget or 0)
+        spent = max(0.0, budget_amount - remaining)
+        usage_pct = (spent / budget_amount * 100) if budget_amount > 0 else 0.0
+
+        if usage_pct >= 90:
+            status = "At Risk"
+        elif usage_pct >= 70:
+            status = "Warning"
+        else:
+            status = "On Track"
+
+        ranked.append(
+            (
+                usage_pct,
+                BudgetGoalItem(
+                    id=str(budget.id),
+                    category=budget.category,
+                    budgetAmount=f"{budget_amount:.2f}",
+                    spentAmount=f"{spent:.2f}",
+                    remainingBudget=f"{remaining:.2f}",
+                    usagePct=f"{usage_pct:.2f}",
+                    status=status,
+                ),
+            )
+        )
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in ranked[:3]]
+
+
+def _top_stocks(db: Session, user_id: str) -> list[StockItem]:
+    stocks = get_stock_instruments_by_user(db, user_id)
+    ranked: list[tuple[float, StockItem]] = []
+
+    for stock in stocks:
+        quantity = float(stock.quantity or 0)
+        current_price = (
+            float(stock.current_price or 0) if stock.current_price is not None else None
+        )
+        average_buy_price = (
+            float(stock.average_buy_price or 0)
+            if stock.average_buy_price is not None
+            else None
+        )
+        market_value = quantity * current_price if current_price is not None else 0.0
+
+        ranked.append(
+            (
+                market_value,
+                StockItem(
+                    id=str(stock.id),
+                    symbol=stock.symbol,
+                    name=stock.name,
+                    quantity=f"{quantity:.6f}",
+                    currentPrice=(
+                        f"{current_price:.6f}" if current_price is not None else None
+                    ),
+                    averageBuyPrice=(
+                        f"{average_buy_price:.6f}"
+                        if average_buy_price is not None
+                        else None
+                    ),
+                    marketValue=(
+                        f"{market_value:.2f}" if current_price is not None else None
+                    ),
+                ),
+            )
+        )
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in ranked[:2]]
+
+
+def _recent_transactions(transactions) -> list[RecentTransactionItem]:
+    sorted_transactions = sorted(
+        transactions,
+        key=lambda t: t.date or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    result: list[RecentTransactionItem] = []
+    for tx in sorted_transactions[:5]:
+        result.append(
+            RecentTransactionItem(
+                id=str(tx.id),
+                date=tx.date.isoformat() if tx.date else "",
+                type=tx.type,
+                amount=_to_decimal_str(tx.amount or 0),
+                category=tx.category,
+                description=tx.description,
+                merchant=tx.merchant,
+            )
+        )
+    return result
+
+
+def _in_window(value: datetime | None, start: pd.Timestamp, end: pd.Timestamp) -> bool:
+    if value is None:
+        return False
+    ts = pd.to_datetime(value, utc=True)
+    return start <= ts <= end
 
 
 @router.get("/{external_id}", response_model=DashboardResponse)
@@ -40,7 +385,7 @@ async def get_dashboard_data(
         raise HTTPException(
             status_code=404, detail="Bank account not found or not owned by user"
         )
-    
+
     # Update completed budgets and evaluate rewards
     update_completed_budgets_for_user(db=db, user_id=current_user.user_id)
     evaluate_rewards(db=db, user=current_user)
@@ -53,136 +398,144 @@ async def get_dashboard_data(
         empty_series = LineSeries(id="", data=[])
         return DashboardResponse(
             summary=SummaryData(
-                totalIncome="0.00", totalExpenses="0.00", totalBalance="0.00"
+                totalIncome="0.00",
+                totalExpenses="0.00",
+                totalBalance="0.00",
+                savingRate="0.00",
             ),
             yearlyLineSeries=[empty_series, empty_series],
             monthlyLineSeries=[empty_series, empty_series],
-            weeklyLineSeries=[empty_series, empty_series],
+            recentTransactions=[],
+            topBudgetGoals=_top_budget_goals(db, current_user.user_id),
+            topStocks=_top_stocks(db, current_user.user_id),
+            aiSuggestions=[],
+            monthlyExpenseCategoryChart=[],
+            yearlyExpenseCategoryChart=[],
         )
 
-    # Convert transactions to DataFrame
     df = pd.DataFrame(
         [
             {
                 "amount": float(t.amount),
                 "type": t.type,
                 "date": t.date,
+                "category": t.category,
             }
             for t in transactions
         ]
     )
 
-    df["date"] = pd.to_datetime(df["date"])
+    df["date"] = pd.to_datetime(df["date"], utc=True)
     df["amount"] = df["amount"].astype(float)
 
-    # Summary totals
-    total_income = df[df["type"] == "CREDIT"]["amount"].sum()
-    total_expenses = df[df["type"] == "DEBIT"]["amount"].sum()
+    now = datetime.now(timezone.utc)
+    month_start, month_end = _month_window(now)
+    year_start, year_end = _year_window(now)
+
+    df_month = df[(df["date"] >= month_start) & (df["date"] <= month_end)].copy()
+    df_year = df[(df["date"] >= year_start) & (df["date"] <= year_end)].copy()
+
+    total_income = df_month[df_month["type"] == "CREDIT"]["amount"].sum()
+    total_expenses = df_month[df_month["type"] == "DEBIT"]["amount"].sum()
     total_balance = total_income - total_expenses
+    saving_rate = ((total_balance / total_income) * 100) if total_income > 0 else 0.0
 
     summary_data = SummaryData(
         totalIncome=f"{total_income:.2f}",
         totalExpenses=f"{total_expenses:.2f}",
         totalBalance=f"{total_balance:.2f}",
+        savingRate=f"{saving_rate:.2f}",
     )
 
-    # Determine timezone of dataframe dates if any, and apply to 'now'
-    now = datetime.now()
-    if not df.empty and df["date"].dt.tz is not None:
-        local_tz = df["date"].dt.tz
-        now = now.astimezone(local_tz) # Make 'now' timezone-aware
+    yearly_line_series = _build_yearly_line_series(df_year, year_start, year_end)
+    monthly_line_series = _build_monthly_line_series(df_month, month_start, month_end)
 
-    twelve_months_ago = now - relativedelta(months=11)
-    df_last_12_months = df[df["date"] >= twelve_months_ago]
-    
-    def format_line_series_data(groups, prefix):
-        income_points = []
-        expense_points = []
+    top_expense_series = (
+        df_month[df_month["type"] == "DEBIT"]
+        .groupby("category")["amount"]
+        .sum()
+        .sort_values(ascending=False)
+    )
 
-        for label, group in groups:
-            income = group[group["type"] == "CREDIT"]["amount"].sum()
-            expense = group[group["type"] == "DEBIT"]["amount"].sum()
+    top_expense_categories = [
+        (category if category else "Uncategorized", float(amount))
+        for category, amount in top_expense_series.head(3).items()
+    ]
 
-            income_points.append(LineSeriesDataPoint(x=str(label), y=f"{income:.2f}"))
-            expense_points.append(LineSeriesDataPoint(x=str(label), y=f"{expense:.2f}"))
-
-        return [
-            LineSeries(id=f"{prefix}_income", data=income_points),
-            LineSeries(id=f"{prefix}_expense", data=expense_points),
-        ]
-
-    # --------------------------
-    # YEARLY LINE SERIES (YEAR-OVER-YEAR)
-    # --------------------------
-    yearly_groups = df.groupby(df["date"].dt.year)
-    yearly_line_series = format_line_series_data(yearly_groups, "yearly")
-
-    # --------------------------
-    # MONTHLY LINE SERIES (LAST 12 MONTHS)
-    # --------------------------
-    monthly_line_series = []
-    if not df_last_12_months.empty:
-        df_last_12_months = df_last_12_months.copy()
-        df_last_12_months["month_year"] = df_last_12_months["date"].dt.to_period("M")
-        
-        date_range = pd.date_range(start=twelve_months_ago, end=now, freq='MS').to_period('M')
-        
-        monthly_income = df_last_12_months[df_last_12_months['type'] == 'CREDIT'].groupby('month_year')['amount'].sum().reindex(date_range, fill_value=0)
-        monthly_expenses = df_last_12_months[df_last_12_months['type'] == 'DEBIT'].groupby('month_year')['amount'].sum().reindex(date_range, fill_value=0)
-
-        income_points = []
-        expense_points = []
-        for period in date_range:
-            month_abbr = period.strftime('%b')
-            income = monthly_income.get(period, 0)
-            expense = monthly_expenses.get(period, 0)
-            income_points.append(LineSeriesDataPoint(x=month_abbr, y=f"{income:.2f}"))
-            expense_points.append(LineSeriesDataPoint(x=month_abbr, y=f"{expense:.2f}"))
-
-        monthly_line_series = [
-            LineSeries(id="monthly_income", data=income_points),
-            LineSeries(id="monthly_expense", data=expense_points),
-        ]
-    else:
-        empty_series = LineSeries(id="", data=[])
-        monthly_line_series = [empty_series, empty_series]
-
-    # --------------------------
-    # WEEKLY LINE SERIES (CURRENT WEEK)
-    # --------------------------
-    start_of_week = now - timedelta(days=now.weekday())
-    end_of_week = start_of_week + timedelta(days=6)
-    df_current_week = df[(df['date'] >= start_of_week) & (df['date'] <= end_of_week)]
-
-    weekly_line_series = []
-    if not df_current_week.empty:
-        df_current_week = df_current_week.copy()
-        df_current_week['day_of_week'] = df_current_week['date'].dt.day_name()
-        
-        daily_groups = df_current_week.groupby('day_of_week')
-        weekly_line_series = format_line_series_data(daily_groups, "weekly")
-
-        # Ensure all days of the week are present
-        days_of_week = list(calendar.day_name)
-        existing_days = {p.x for s in weekly_line_series for p in s.data}
-        for day in days_of_week:
-            if day not in existing_days:
-                for series in weekly_line_series:
-                    series.data.append(LineSeriesDataPoint(x=day, y="0.00"))
-        
-        # Sort data by day of the week
-        day_order = {day: i for i, day in enumerate(calendar.day_name)}
-        for series in weekly_line_series:
-            series.data.sort(key=lambda p: day_order[p.x])
-
-    else:
-        empty_series = LineSeries(id="", data=[])
-        weekly_line_series = [empty_series, empty_series]
-
+    ai_suggestions = await _generate_ai_suggestions(top_expense_categories)
+    monthly_expense_category_chart = _build_expense_category_chart(df_month)
+    yearly_expense_category_chart = _build_expense_category_chart(df_year)
 
     return DashboardResponse(
         summary=summary_data,
         yearlyLineSeries=yearly_line_series,
         monthlyLineSeries=monthly_line_series,
-        weeklyLineSeries=weekly_line_series,
+        recentTransactions=_recent_transactions(
+            [tx for tx in transactions if _in_window(tx.date, month_start, month_end)]
+        ),
+        topBudgetGoals=_top_budget_goals(db, current_user.user_id),
+        topStocks=_top_stocks(db, current_user.user_id),
+        aiSuggestions=ai_suggestions,
+        monthlyExpenseCategoryChart=monthly_expense_category_chart,
+        yearlyExpenseCategoryChart=yearly_expense_category_chart,
     )
+
+
+@router.get(
+    "/{external_id}/ai-suggestions", response_model=DashboardAISuggestionsResponse
+)
+async def get_dashboard_ai_suggestions(
+    external_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db_bank_account = (
+        db.query(BankAccount)
+        .filter(BankAccount.external_account_id == external_id)
+        .first()
+    )
+
+    if not db_bank_account or db_bank_account.user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Bank account not found or not owned by user",
+        )
+
+    transactions = crud.get_transactions_by_account(
+        db=db, account_id=db_bank_account.id
+    )
+    if not transactions:
+        return DashboardAISuggestionsResponse(suggestions=[])
+
+    df = pd.DataFrame(
+        [
+            {
+                "amount": float(t.amount),
+                "type": t.type,
+                "category": t.category,
+                "date": t.date,
+            }
+            for t in transactions
+        ]
+    )
+
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+
+    now = datetime.now(timezone.utc)
+    month_start, month_end = _month_window(now)
+    df_month = df[(df["date"] >= month_start) & (df["date"] <= month_end)].copy()
+
+    top_expense_series = (
+        df_month[df_month["type"] == "DEBIT"]
+        .groupby("category")["amount"]
+        .sum()
+        .sort_values(ascending=False)
+    )
+
+    top_expense_categories = [
+        (category if category else "Uncategorized", float(amount))
+        for category, amount in top_expense_series.head(3).items()
+    ]
+
+    suggestions = await _generate_ai_suggestions(top_expense_categories)
+    return DashboardAISuggestionsResponse(suggestions=suggestions)
