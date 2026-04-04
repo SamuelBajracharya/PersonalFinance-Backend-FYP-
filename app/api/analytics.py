@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 import pandas as pd
@@ -13,9 +14,26 @@ from app.models.bank import BankAccount
 router = APIRouter()
 
 
-@router.get("/{external_id}", response_model=schemas.AnalyticsResponse)
+def _get_user_nabil_account(db: Session, user_id: str) -> BankAccount:
+    account = (
+        db.query(BankAccount)
+        .filter(
+            BankAccount.user_id == user_id,
+            BankAccount.is_active == True,
+            func.lower(BankAccount.bank_name).like("%nabil%"),
+        )
+        .first()
+    )
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="No active Nabil bank account found for user",
+        )
+    return account
+
+
+@router.get("/", response_model=schemas.AnalyticsResponse)
 def get_financial_analytics(
-    external_id: str,  # Now string for external_account_id
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     time_horizon: str | None = Query(
@@ -32,17 +50,8 @@ def get_financial_analytics(
         description="ISO end date for analytics filter (e.g. 2025-12-31T18:14:59.999Z)",
     ),
 ):
-    # Verify account ownership using external_account_id
-    db_bank_account = (
-        db.query(BankAccount)
-        .filter(BankAccount.external_account_id == external_id)
-        .first()
-    )
-
-    if not db_bank_account or db_bank_account.user_id != current_user.user_id:
-        raise HTTPException(
-            status_code=404, detail="Bank account not found or not owned by user"
-        )
+    db_bank_account = _get_user_nabil_account(db, current_user.user_id)
+    external_id = db_bank_account.external_account_id
 
     # Fetch transactions using internal id
     transactions = crud.get_transactions_by_account(

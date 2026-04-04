@@ -14,7 +14,7 @@ def get_my_timeline(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    events = fetch_user_timeline(db, user_id=str(current_user.id))
+    events = fetch_user_timeline(db, user_id=str(current_user.user_id))
     return [
         {
             "id": str(event.id),

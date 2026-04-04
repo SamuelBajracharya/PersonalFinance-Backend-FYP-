@@ -5,6 +5,7 @@ import httpx
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import crud
@@ -30,6 +31,24 @@ from app.services.budget_goal_intelligence import get_all_budget_goal_statuses
 from app.utils.deps import get_current_user, get_db
 
 router = APIRouter()
+
+
+def _get_user_nabil_account(db: Session, user_id: str) -> BankAccount:
+    account = (
+        db.query(BankAccount)
+        .filter(
+            BankAccount.user_id == user_id,
+            BankAccount.is_active == True,
+            func.lower(BankAccount.bank_name).like("%nabil%"),
+        )
+        .first()
+    )
+    if not account:
+        raise HTTPException(
+            status_code=404,
+            detail="No active Nabil bank account found for user",
+        )
+    return account
 
 
 def _to_decimal_str(value: float | Decimal) -> str:
@@ -391,22 +410,13 @@ def _in_window(value: datetime | None, start: pd.Timestamp, end: pd.Timestamp) -
     return start <= ts <= end
 
 
-@router.get("/{external_id}", response_model=DashboardResponse)
+@router.get("/", response_model=DashboardResponse)
 async def get_dashboard_data(
-    external_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_bank_account = (
-        db.query(BankAccount)
-        .filter(BankAccount.external_account_id == external_id)
-        .first()
-    )
-
-    if not db_bank_account or db_bank_account.user_id != current_user.user_id:
-        raise HTTPException(
-            status_code=404, detail="Bank account not found or not owned by user"
-        )
+    db_bank_account = _get_user_nabil_account(db, current_user.user_id)
+    external_id = db_bank_account.external_account_id
 
     # Update completed budgets and evaluate rewards
     update_completed_budgets_for_user(db=db, user_id=current_user.user_id)
@@ -503,25 +513,13 @@ async def get_dashboard_data(
     )
 
 
-@router.get(
-    "/{external_id}/ai-suggestions", response_model=DashboardAISuggestionsResponse
-)
+@router.get("/ai-suggestions", response_model=DashboardAISuggestionsResponse)
 async def get_dashboard_ai_suggestions(
-    external_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    db_bank_account = (
-        db.query(BankAccount)
-        .filter(BankAccount.external_account_id == external_id)
-        .first()
-    )
-
-    if not db_bank_account or db_bank_account.user_id != current_user.user_id:
-        raise HTTPException(
-            status_code=404,
-            detail="Bank account not found or not owned by user",
-        )
+    db_bank_account = _get_user_nabil_account(db, current_user.user_id)
+    external_id = db_bank_account.external_account_id
 
     transactions = crud.get_transactions_by_account(
         db=db, account_id=db_bank_account.id
