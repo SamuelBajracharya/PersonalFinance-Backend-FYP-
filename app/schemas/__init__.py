@@ -15,6 +15,7 @@ from .user import (
     UserLogin,
     PasswordResetRequest,
     PasswordReset,
+    UserProfileImageResponse,
 )
 from .token import (
     Token,
@@ -72,6 +73,7 @@ __all__ = [
     "OtpVerify",
     "PasswordResetRequest",
     "PasswordReset",
+    "UserProfileImageResponse",
     "ResetToken",
     "RefreshTokenRequest",
     "BankAccount",

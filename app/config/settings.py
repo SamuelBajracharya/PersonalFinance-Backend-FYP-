@@ -1,5 +1,5 @@
-
 from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     SECRET_KEY: str
@@ -16,9 +16,15 @@ class Settings(BaseSettings):
     SMTP_USER: str
     SMTP_PASSWORD: str
     SMTP_FROM_EMAIL: str
-    OLLAMA_API_URL: str = "http://localhost:11434/api/generate" # Default for local Ollama
+    OLLAMA_API_URL: str = (
+        "http://localhost:11434/api/generate"  # Default for local Ollama
+    )
+    CLOUDINARY_CLOUD_NAME: str | None = None
+    CLOUDINARY_API_KEY: str | None = None
+    CLOUDINARY_API_SECRET: str | None = None
 
     class Config:
         env_file = ".env"
+
 
 settings = Settings()

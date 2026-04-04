@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from app.crud.budget import update_completed_budgets_for_user
 from app.services.reward_evaluation import evaluate_rewards
 from app.crud import (
@@ -10,6 +10,7 @@ from app.crud import (
     delete_otp,
     update_user_verified_status,
     update_user_password,
+    update_user_profile_image,
 )
 from app.schemas import (
     User,
@@ -23,7 +24,8 @@ from app.schemas import (
     ResetToken,
     PasswordReset,
     RefreshTokenRequest,
-    TokenWithRewards, # Import TokenWithRewards
+    TokenWithRewards,  # Import TokenWithRewards
+    UserProfileImageResponse,
 )
 from app.models.otp import OtpPurpose
 from app.utils.deps import (
@@ -45,6 +47,7 @@ from app.utils.email import send_otp_email
 import random
 import string
 import datetime
+from app.services.cloudinary_service import upload_user_profile_picture
 
 router = APIRouter()
 
@@ -67,6 +70,7 @@ async def login_user(user_login: UserLogin, db: Session = Depends(get_db)):
         "message": "Login successful, please request an OTP.",
     }
 
+
 @router.post("/request-password-reset", response_model=TempToken)
 async def request_password_reset(
     request: PasswordResetRequest, db: Session = Depends(get_db)
@@ -86,28 +90,31 @@ async def request_password_reset(
         "message": "User found. Please request an OTP for password reset.",
     }
 
+
 @router.post("/request-otp")
 async def request_otp(
     otp_request: OtpRequest,
     current_user: User = Depends(get_current_user_from_temp_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    otp_code = ''.join(random.choices(string.digits, k=6))
+    otp_code = "".join(random.choices(string.digits, k=6))
     hashed_otp = get_password_hash(otp_code)
 
     # If existing OTP for same purpose, delete it first
-    existing_otp = get_otp_by_user_id(db, user_id=current_user.user_id, purpose=otp_request.purpose)
+    existing_otp = get_otp_by_user_id(
+        db, user_id=current_user.user_id, purpose=otp_request.purpose
+    )
     if existing_otp:
         delete_otp(db, db_otp=existing_otp)
 
     # Create new OTP
-    create_otp(db, user_id=current_user.user_id, code=hashed_otp, purpose=otp_request.purpose)
+    create_otp(
+        db, user_id=current_user.user_id, code=hashed_otp, purpose=otp_request.purpose
+    )
 
     # 🧩 Pass purpose here
     send_otp_email(
-        to_email=current_user.email,
-        otp=otp_code,
-        purpose=otp_request.purpose
+        to_email=current_user.email, otp=otp_code, purpose=otp_request.purpose
     )
 
     return {"message": f"OTP for '{otp_request.purpose}' has been sent to your email."}
@@ -117,9 +124,11 @@ async def request_otp(
 async def verify_otp(
     otp_data: OtpVerify,
     current_user: User = Depends(get_current_user_from_temp_token),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    db_otp = get_otp_by_user_id(db, user_id=current_user.user_id, purpose=otp_data.purpose)
+    db_otp = get_otp_by_user_id(
+        db, user_id=current_user.user_id, purpose=otp_data.purpose
+    )
 
     if not db_otp or db_otp.is_used:
         raise HTTPException(status_code=400, detail="OTP not found or already used.")
@@ -141,7 +150,9 @@ async def verify_otp(
         update_user_verified_status(db, user_id=current_user.user_id, is_verified=True)
         token_data = {"sub": current_user.email, "id": current_user.user_id}
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
+        refresh_token = create_refresh_token(
+            data={**token_data, "token_type": "refresh"}
+        )
         return Token(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -167,6 +178,7 @@ async def verify_otp(
         token_type="bearer",
     )
 
+
 @router.post("/reset-password")
 async def reset_password(
     password_data: PasswordReset,
@@ -183,7 +195,7 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
     user.password = get_password_hash(user.password)
     new_user = create_user(db=db, user=user)
 
@@ -196,7 +208,7 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
     }
 
 
-@router.post("/refresh", response_model=TokenWithRewards) # Change response_model
+@router.post("/refresh", response_model=TokenWithRewards)  # Change response_model
 async def refresh_token(
     token_request: RefreshTokenRequest, db: Session = Depends(get_db)
 ):
@@ -206,15 +218,56 @@ async def refresh_token(
     token_data = {"sub": current_user.email, "id": current_user.user_id}
     access_token = create_access_token(data=token_data)
     refresh_token = create_refresh_token(data={**token_data, "token_type": "refresh"})
-    new_rewards = evaluate_rewards(db=db, user=current_user) # Capture new rewards
-    return TokenWithRewards( # Use TokenWithRewards
+    new_rewards = evaluate_rewards(db=db, user=current_user)  # Capture new rewards
+    return TokenWithRewards(  # Use TokenWithRewards
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
-        new_rewards=new_rewards # Include new rewards
+        new_rewards=new_rewards,  # Include new rewards
     )
 
 
 @router.get("/users/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/users/me/profile-picture", response_model=UserProfileImageResponse)
+async def upload_profile_picture(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    max_size_bytes = 5 * 1024 * 1024
+    if len(file_bytes) > max_size_bytes:
+        raise HTTPException(status_code=400, detail="Image size must be <= 5MB")
+
+    try:
+        profile_image_url = upload_user_profile_picture(
+            file_bytes=file_bytes,
+            filename=file.filename or "profile-picture",
+            user_id=current_user.user_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to upload profile picture"
+        ) from exc
+
+    updated_user = update_user_profile_image(
+        db=db,
+        user_id=current_user.user_id,
+        profile_image_url=profile_image_url,
+    )
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserProfileImageResponse(profile_image_url=updated_user.profile_image_url)

@@ -14,6 +14,7 @@ cryptography
 jwcrypto
 pydantic[email]
 httpx
+cloudinary
 
 # AI Model Dependencies
 tensorflow
