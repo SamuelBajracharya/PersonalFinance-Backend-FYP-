@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models import User
 from app.schemas import UserCreate
+from app.services.cloudinary_service import get_random_default_profile_image_url
 
 
 def get_user_by_email(db: Session, email: str):
@@ -12,7 +13,13 @@ def get_user_by_id(db: Session, user_id: str):
 
 
 def create_user(db: Session, user: UserCreate):
-    db_user = User(email=user.email, name=user.name, hashed_password=user.password)
+    default_profile_image_url = get_random_default_profile_image_url("profile/default")
+    db_user = User(
+        email=user.email,
+        name=user.name,
+        hashed_password=user.password,
+        profile_image_url=default_profile_image_url,
+    )
     db.add(db_user)
     db.commit()
     db.refresh(db_user)

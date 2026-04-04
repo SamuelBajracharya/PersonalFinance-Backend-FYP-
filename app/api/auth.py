@@ -1,4 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    UploadFile,
+    File,
+    Request,
+)
 from app.crud.budget import update_completed_budgets_for_user
 from app.services.reward_evaluation import evaluate_rewards
 from app.crud import (
@@ -47,9 +55,67 @@ from app.utils.email import send_otp_email
 import random
 import string
 import datetime
-from app.services.cloudinary_service import upload_user_profile_picture
+from app.services.cloudinary_service import (
+    upload_user_profile_picture,
+    get_random_default_profile_image_url,
+)
 
 router = APIRouter()
+
+
+async def _save_profile_picture_for_current_user(
+    file: UploadFile | None,
+    request: Request,
+    current_user: User,
+    db: Session,
+) -> UserProfileImageResponse:
+    if file is None:
+        form = await request.form()
+        for key in ("file", "profile_picture", "profilePicture", "image"):
+            candidate = form.get(key)
+            if isinstance(candidate, UploadFile):
+                file = candidate
+                break
+
+    if file is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No image file provided. Send multipart/form-data with field 'file'.",
+        )
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    max_size_bytes = 5 * 1024 * 1024
+    if len(file_bytes) > max_size_bytes:
+        raise HTTPException(status_code=400, detail="Image size must be <= 5MB")
+
+    try:
+        profile_image_url = upload_user_profile_picture(
+            file_bytes=file_bytes,
+            filename=file.filename or "profile-picture",
+            user_id=current_user.user_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="Failed to upload profile picture"
+        ) from exc
+
+    updated_user = update_user_profile_image(
+        db=db,
+        user_id=current_user.user_id,
+        profile_image_url=profile_image_url,
+    )
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserProfileImageResponse(profile_image_url=updated_user.profile_image_url)
 
 
 @router.post("/login", response_model=TempToken)
@@ -232,40 +298,37 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
-@router.post("/users/me/profile-picture", response_model=UserProfileImageResponse)
-async def upload_profile_picture(
-    file: UploadFile = File(...),
+@router.put("/users/me/profile-picture", response_model=UserProfileImageResponse)
+async def change_profile_picture(
+    request: Request,
+    file: UploadFile | None = File(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
+    return await _save_profile_picture_for_current_user(
+        file=file,
+        request=request,
+        current_user=current_user,
+        db=db,
+    )
 
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    max_size_bytes = 5 * 1024 * 1024
-    if len(file_bytes) > max_size_bytes:
-        raise HTTPException(status_code=400, detail="Image size must be <= 5MB")
-
-    try:
-        profile_image_url = upload_user_profile_picture(
-            file_bytes=file_bytes,
-            filename=file.filename or "profile-picture",
-            user_id=current_user.user_id,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
+@router.delete("/users/me/profile-picture", response_model=UserProfileImageResponse)
+async def reset_profile_picture_to_default(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    default_profile_image_url = get_random_default_profile_image_url("profile/defaults")
+    if not default_profile_image_url:
         raise HTTPException(
-            status_code=500, detail="Failed to upload profile picture"
-        ) from exc
+            status_code=500,
+            detail="No default profile image available in Cloudinary folder profile/defaults",
+        )
 
     updated_user = update_user_profile_image(
         db=db,
         user_id=current_user.user_id,
-        profile_image_url=profile_image_url,
+        profile_image_url=default_profile_image_url,
     )
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
