@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import crud
 from app.config.settings import settings
-from app.crud.budget import get_budgets_by_user, update_completed_budgets_for_user
+from app.crud.budget import update_completed_budgets_for_user
 from app.crud.stock_instrument import get_stock_instruments_by_user
 from app.models.bank import BankAccount
 from app.models.user import User
@@ -26,6 +26,7 @@ from app.schemas.dashboard import (
     SummaryData,
 )
 from app.services.reward_evaluation import evaluate_rewards
+from app.services.budget_goal_intelligence import get_all_budget_goal_statuses
 from app.utils.deps import get_current_user, get_db
 
 router = APIRouter()
@@ -279,18 +280,21 @@ def _build_expense_category_chart(
 
 
 def _top_budget_goals(db: Session, user_id: str) -> list[BudgetGoalItem]:
-    budgets = get_budgets_by_user(db, user_id)
+    statuses = get_all_budget_goal_statuses(db, user_id)
     ranked: list[tuple[float, BudgetGoalItem]] = []
 
-    for budget in budgets:
-        budget_amount = float(budget.budget_amount or 0)
-        remaining = float(budget.remaining_budget or 0)
-        spent = max(0.0, budget_amount - remaining)
-        usage_pct = (spent / budget_amount * 100) if budget_amount > 0 else 0.0
+    for status_payload in statuses:
+        budget_amount = float(status_payload.get("budget_amount") or 0)
+        spent = float(status_payload.get("current_spend") or 0)
+        remaining = float(status_payload.get("remaining_budget") or 0)
+        usage_pct = float(status_payload.get("progress_percent") or 0)
+        predicted_to_exceed = bool(status_payload.get("predicted_to_exceed"))
 
-        if usage_pct >= 90:
+        if usage_pct >= 100:
+            status = "Overspent"
+        elif predicted_to_exceed:
             status = "At Risk"
-        elif usage_pct >= 70:
+        elif usage_pct >= 80:
             status = "Warning"
         else:
             status = "On Track"
@@ -299,8 +303,8 @@ def _top_budget_goals(db: Session, user_id: str) -> list[BudgetGoalItem]:
             (
                 usage_pct,
                 BudgetGoalItem(
-                    id=str(budget.id),
-                    category=budget.category,
+                    id=str(status_payload.get("budget_id")),
+                    category=str(status_payload.get("category") or "Uncategorized"),
                     budgetAmount=f"{budget_amount:.2f}",
                     spentAmount=f"{spent:.2f}",
                     remainingBudget=f"{remaining:.2f}",
