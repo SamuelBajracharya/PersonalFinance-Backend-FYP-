@@ -22,6 +22,10 @@ EXTERNAL_BANK_API_BASE_URL = "https://koshconnect.onrender.com"
 logger = logging.getLogger(__name__)
 
 
+class BankAccountAlreadyLinkedError(Exception):
+    """Raised when a KoshConnect account is already linked to a different user."""
+
+
 def _extract_instruments_from_payload(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -252,6 +256,10 @@ async def login_and_sync_all_accounts(
                                 f"Failed to retrieve existing bank account after IntegrityError for {external_account_id}"
                             )
                             raise e  # Re-raise if we still can't find it
+                        if local_account.user_id != user_id:
+                            raise BankAccountAlreadyLinkedError(
+                                "Cannot link to this KoshConnect account."
+                            )
                     except Exception as e:
                         db.rollback()
                         logger.error(
@@ -260,6 +268,11 @@ async def login_and_sync_all_accounts(
                         )
                         raise e  # Re-raise the exception
                 else:
+                    if local_account.user_id != user_id:
+                        raise BankAccountAlreadyLinkedError(
+                            "Cannot link to this KoshConnect account."
+                        )
+
                     # If account is inactive, re-activate it.
                     if not local_account.is_active:
                         local_account.is_active = True

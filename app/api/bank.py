@@ -7,7 +7,10 @@ from typing import List
 from app import crud, schemas
 from app.utils.deps import get_db, get_current_user
 from app.models.user import User
-from app.services.bank_sync import login_and_sync_all_accounts
+from app.services.bank_sync import (
+    BankAccountAlreadyLinkedError,
+    login_and_sync_all_accounts,
+)
 
 router = APIRouter()
 
@@ -27,12 +30,15 @@ async def login_to_bank_and_sync(
 
     # 1. Login to bank API
 
-    sync_summary = await login_and_sync_all_accounts(
-        user_id=current_user.user_id,
-        username=username,
-        password=password,
-        db=db,
-    )
+    try:
+        sync_summary = await login_and_sync_all_accounts(
+            user_id=current_user.user_id,
+            username=username,
+            password=password,
+            db=db,
+        )
+    except BankAccountAlreadyLinkedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
     # Update sync status metadata
     from app.services.bank_sync_status import record_bank_sync_attempt
