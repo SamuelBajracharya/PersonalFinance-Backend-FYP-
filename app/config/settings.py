@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     CLOUDINARY_CLOUD_NAME: str | None = None
     CLOUDINARY_API_KEY: str | None = None
     CLOUDINARY_API_SECRET: str | None = None
+    KOSHCONNECT_BASE_URL: str = "https://koshconnect.onrender.com"
+    KOSHCONNECT_SIGNING_SECRET: str | None = None
+    KOSHCONNECT_SIGN_TOKEN_REQUEST: bool = False
 
     class Config:
         env_file = ".env"

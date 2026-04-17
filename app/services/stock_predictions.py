@@ -284,6 +284,22 @@ def _extract_instruments_from_payload(payload) -> list[dict]:
     return []
 
 
+def _extract_user_id_from_payload(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    user_id = payload.get("user_id")
+    if isinstance(user_id, str) and user_id.strip():
+        return user_id.strip()
+    return None
+
+
+def _with_path_fallback(path: str) -> tuple[str, ...]:
+    clean_path = f"/{path.lstrip('/')}"
+    if clean_path.endswith("/"):
+        return (clean_path, clean_path.rstrip("/"))
+    return (clean_path, f"{clean_path}/")
+
+
 def _normalize_instrument(raw_item: dict) -> dict | None:
     symbol = (raw_item.get("symbol") or raw_item.get("ticker") or "").strip().upper()
     if not symbol:
@@ -312,14 +328,33 @@ def _get_external_user_instruments(db, user_id: str) -> list[dict]:
         return []
 
     headers = {"Authorization": f"Bearer {account.bank_token}"}
-    for path in ("/stock-instruments", "/instruments", "/investments"):
+    endpoint_candidates = ["/stock-instruments", "/instruments", "/investments"]
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            me_response = client.get(
+                f"{EXTERNAL_BANK_API_BASE_URL}/users/me/", headers=headers
+            )
+        me_response.raise_for_status()
+        external_user_id = _extract_user_id_from_payload(me_response.json())
+        if external_user_id:
+            endpoint_candidates.insert(0, f"/users/{external_user_id}/stocks")
+    except Exception:
+        pass
+
+    for path in endpoint_candidates:
         try:
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(
-                    f"{EXTERNAL_BANK_API_BASE_URL}{path}", headers=headers
-                )
-            response.raise_for_status()
-            items = _extract_instruments_from_payload(response.json())
+            items = []
+            for path_variant in _with_path_fallback(path):
+                with httpx.Client(timeout=10.0) as client:
+                    response = client.get(
+                        f"{EXTERNAL_BANK_API_BASE_URL}{path_variant}", headers=headers
+                    )
+                response.raise_for_status()
+                items = _extract_instruments_from_payload(response.json())
+                if items:
+                    break
+
             normalized = []
             for item in items:
                 parsed = _normalize_instrument(item)

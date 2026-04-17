@@ -1,8 +1,12 @@
 import asyncio
+import hashlib
+import hmac
 import logging
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from sqlalchemy.orm import Session
@@ -12,11 +16,13 @@ from sqlalchemy.exc import IntegrityError
 from app.models.bank import BankAccount, Transaction
 from app.models.stock_instrument import StockInstrument
 from app.models.user import User
+from app.config.settings import settings
 from app.services.event_logger import log_event_async
 from app.utils import dispatcher
 from app.utils.events import TransactionCreated
 
-EXTERNAL_BANK_API_BASE_URL = "https://koshconnect.onrender.com"
+EXTERNAL_BANK_API_BASE_URL = settings.KOSHCONNECT_BASE_URL.rstrip("/")
+STOCK_ENDPOINTS_FALLBACK = ("/stock-instruments", "/instruments", "/investments")
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -24,6 +30,144 @@ logger = logging.getLogger(__name__)
 
 class BankAccountAlreadyLinkedError(Exception):
     """Raised when a KoshConnect account is already linked to a different user."""
+
+
+def _build_koshconnect_signature_headers(raw_body: bytes) -> dict[str, str]:
+    request_id = str(uuid.uuid4())
+    message = request_id.encode("utf-8") + b"." + raw_body
+    secret = settings.KOSHCONNECT_SIGNING_SECRET
+    if not secret:
+        logger.warning(
+            "KOSHCONNECT_SIGNING_SECRET is missing; sending placeholder signature for /token. "
+            "Set KOSHCONNECT_SIGNING_SECRET to match third-party API secret."
+        )
+        signature = hmac.new(b"", message, hashlib.sha256).hexdigest()
+    else:
+        signature = hmac.new(
+            secret.encode("utf-8"), message, hashlib.sha256
+        ).hexdigest()
+
+    return {
+        "X-Request-ID": request_id,
+        "X-Bank-Signature": signature,
+    }
+
+
+def _is_signing_configured() -> bool:
+    return bool(settings.KOSHCONNECT_SIGNING_SECRET)
+
+
+def _with_path_fallback(path: str) -> tuple[str, ...]:
+    clean_path = f"/{path.lstrip('/')}"
+    if clean_path.endswith("/"):
+        return (clean_path, clean_path.rstrip("/"))
+    return (clean_path, f"{clean_path}/")
+
+
+async def _get_json(
+    client: httpx.AsyncClient,
+    path: str,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    last_error: Exception | None = None
+    for variant in _with_path_fallback(path):
+        try:
+            response = await client.get(
+                f"{EXTERNAL_BANK_API_BASE_URL}{variant}",
+                headers=headers,
+            )
+            response.raise_for_status()
+            return response.json()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(f"Failed to fetch endpoint: {path}")
+
+
+async def _post_form_json(
+    client: httpx.AsyncClient,
+    path: str,
+    form_data: dict[str, Any],
+    sign_request: bool = False,
+) -> Any:
+    encoded_form = urlencode(
+        {k: "" if v is None else str(v) for k, v in form_data.items()}
+    ).encode("utf-8")
+    request_headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    if sign_request:
+        request_headers.update(_build_koshconnect_signature_headers(encoded_form))
+
+    if sign_request and not _is_signing_configured():
+        logger.warning(
+            "KoshConnect request signing is enabled but KOSHCONNECT_SIGNING_SECRET is missing. "
+            "Token requests may fail with 401."
+        )
+
+    last_error: Exception | None = None
+    for variant in _with_path_fallback(path):
+        try:
+            response = await client.post(
+                f"{EXTERNAL_BANK_API_BASE_URL}{variant}",
+                content=encoded_form,
+                headers=request_headers,
+                follow_redirects=True,
+            )
+            response.raise_for_status()
+            return response.json()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(f"Failed to post endpoint: {path}")
+
+
+def _extract_accounts_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("accounts", "data", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _extract_transactions_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    for key in ("transactions", "data", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _extract_user_id_from_payload(payload: Any) -> str | None:
+    if isinstance(payload, dict):
+        user_id = payload.get("user_id")
+        if isinstance(user_id, str) and user_id.strip():
+            return user_id.strip()
+    return None
+
+
+def _parse_api_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value.strip():
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return datetime.utcnow()
 
 
 def _extract_instruments_from_payload(payload: Any) -> list[dict[str, Any]]:
@@ -114,40 +258,58 @@ async def login_and_sync_all_accounts(
     }
 
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             try:
                 if bank_token:
+                    headers = {"Authorization": f"Bearer {bank_token}"}
                     # Fetch user_id from /users/me/
-                    user_info_response = await client.get(
-                        f"{EXTERNAL_BANK_API_BASE_URL}/users/me/",
-                        headers={"Authorization": f"Bearer {bank_token}"},
+                    user_info = await _get_json(
+                        client=client,
+                        path="/users/me",
+                        headers=headers,
                     )
-                    user_info_response.raise_for_status()
-                    user_id_kosh = user_info_response.json()["user_id"]
+                    user_id_kosh = _extract_user_id_from_payload(user_info)
+                    if not user_id_kosh:
+                        raise ValueError("Missing user_id in /users/me response")
 
                     # Fetch accounts for this user
-                    accounts_response = await client.get(
-                        f"{EXTERNAL_BANK_API_BASE_URL}/users/{user_id_kosh}/accounts",
-                        headers={"Authorization": f"Bearer {bank_token}"},
+                    accounts_payload = await _get_json(
+                        client=client,
+                        path=f"/users/{user_id_kosh}/accounts",
+                        headers=headers,
                     )
-                    accounts_response.raise_for_status()
                     login_data = {
-                        "accounts": accounts_response.json(),
+                        "accounts": _extract_accounts_from_payload(accounts_payload),
                         "access_token": bank_token,
+                        "user_id": user_id_kosh,
                     }
                 else:
-                    login_response = await client.post(
-                        f"{EXTERNAL_BANK_API_BASE_URL}/token",
-                        data={"username": username, "password": password},
+                    login_data = await _post_form_json(
+                        client=client,
+                        path="/token",
+                        form_data={"username": username, "password": password},
+                        sign_request=settings.KOSHCONNECT_SIGN_TOKEN_REQUEST,
                     )
-                    login_response.raise_for_status()
-                    login_data = login_response.json()
             except httpx.HTTPStatusError as e:
                 logger.error(
                     f"HTTP error during KoshConnect login: {e.response.status_code} - {e.response.text}"
                 )
+                if (
+                    e.response.status_code in (401, 403)
+                    and settings.KOSHCONNECT_SIGN_TOKEN_REQUEST
+                    and not _is_signing_configured()
+                ):
+                    summary["message"] = (
+                        "KoshConnect authentication failed: request signing is enabled but "
+                        "KOSHCONNECT_SIGNING_SECRET is not configured in backend .env"
+                    )
+                    return summary
+                upstream_detail = (e.response.text or "").strip()
+                if len(upstream_detail) > 300:
+                    upstream_detail = f"{upstream_detail[:300]}..."
                 summary["message"] = (
                     f"KoshConnect authentication failed: {e.response.status_code}"
+                    + (f" - {upstream_detail}" if upstream_detail else "")
                 )
                 return summary
             except httpx.RequestError as e:
@@ -161,8 +323,11 @@ async def login_and_sync_all_accounts(
                 summary["message"] = f"Login failed: {e}"
                 return summary
 
-            accounts = login_data.get("accounts")
+            accounts = _extract_accounts_from_payload(login_data)
             bank_token = login_data.get("access_token")
+            external_user_id = _extract_user_id_from_payload(login_data)
+            if not external_user_id and accounts:
+                external_user_id = _extract_user_id_from_payload(accounts[0])
 
             if not accounts or not bank_token:
                 summary["message"] = "Login succeeded, but no accounts returned."
@@ -176,19 +341,19 @@ async def login_and_sync_all_accounts(
 
             stock_instruments = _extract_instruments_from_payload(login_data)
             if not stock_instruments:
-                for instruments_path in (
-                    "/stock-instruments",
-                    "/instruments",
-                    "/investments",
-                ):
+                stock_paths = list(STOCK_ENDPOINTS_FALLBACK)
+                if external_user_id:
+                    stock_paths.insert(0, f"/users/{external_user_id}/stocks")
+
+                for instruments_path in stock_paths:
                     try:
-                        instrument_res = await client.get(
-                            f"{EXTERNAL_BANK_API_BASE_URL}{instruments_path}",
+                        instruments_payload = await _get_json(
+                            client=client,
+                            path=instruments_path,
                             headers=headers,
                         )
-                        instrument_res.raise_for_status()
                         stock_instruments = _extract_instruments_from_payload(
-                            instrument_res.json()
+                            instruments_payload
                         )
                         if stock_instruments:
                             break
@@ -213,7 +378,23 @@ async def login_and_sync_all_accounts(
 
             # Process each account
             for account in accounts:
-                external_account_id = account["account_id"]
+                external_account_id = str(
+                    account.get("account_id") or account.get("id") or ""
+                )
+                if not external_account_id:
+                    logger.warning("Skipping account without account_id: %s", account)
+                    continue
+
+                bank_name = account.get("bank_name") or account.get("bank") or "Unknown"
+                account_number_masked = (
+                    account.get("account_number_masked")
+                    or account.get("account_number")
+                    or "****"
+                )
+                account_type = (
+                    account.get("account_type") or account.get("type") or "Unknown"
+                )
+                balance = Decimal(str(account.get("balance", 0)))
 
                 # Create BankAccount if not exists
                 local_account = (
@@ -227,10 +408,10 @@ async def login_and_sync_all_accounts(
                         local_account = BankAccount(
                             external_account_id=external_account_id,
                             user_id=user_id,
-                            bank_name=account["bank_name"],
-                            account_number_masked=account["account_number_masked"],
-                            account_type=account["account_type"],
-                            balance=Decimal(str(account["balance"])),
+                            bank_name=bank_name,
+                            account_number_masked=account_number_masked,
+                            account_type=account_type,
+                            balance=balance,
                             is_active=True,
                             bank_token=bank_token,
                         )
@@ -280,8 +461,8 @@ async def login_and_sync_all_accounts(
                         db.refresh(local_account)
 
                     # Update balance if changed
-                    if local_account.balance != Decimal(str(account["balance"])):
-                        local_account.balance = Decimal(str(account["balance"]))
+                    if local_account.balance != balance:
+                        local_account.balance = balance
                         db.commit()
                         db.refresh(local_account)
 
@@ -305,12 +486,12 @@ async def login_and_sync_all_accounts(
 
                 # Fetch transactions from KoshConnect
                 try:
-                    tx_response = await client.get(
-                        f"{EXTERNAL_BANK_API_BASE_URL}/accounts/{external_account_id}/transactions",
+                    tx_payload = await _get_json(
+                        client=client,
+                        path=f"/accounts/{external_account_id}/transactions",
                         headers=headers,
                     )
-                    tx_response.raise_for_status()
-                    transactions_data = tx_response.json()
+                    transactions_data = _extract_transactions_from_payload(tx_payload)
                 except httpx.HTTPStatusError as e:
                     logger.error(
                         f"HTTP error fetching transactions for {external_account_id}: {e.response.status_code} - {e.response.text}"
@@ -337,29 +518,34 @@ async def login_and_sync_all_accounts(
                 new_transactions_count = 0
                 latest_tx_datetime = None
                 for tx in transactions_data:
+                    external_transaction_id = str(
+                        tx.get("transaction_id") or tx.get("id") or ""
+                    )
+                    if not external_transaction_id:
+                        continue
+
                     existing_tx = (
                         db.query(Transaction)
                         .filter(
-                            Transaction.external_transaction_id == tx["transaction_id"]
+                            Transaction.external_transaction_id
+                            == external_transaction_id
                         )
                         .first()
                     )
                     if existing_tx:
                         continue
                     try:
-                        tx_datetime = datetime.fromisoformat(
-                            tx["date"].replace("Z", "+00:00")
-                        )
+                        tx_datetime = _parse_api_datetime(tx.get("date"))
                         new_tx = Transaction(
-                            external_transaction_id=tx["transaction_id"],
+                            external_transaction_id=external_transaction_id,
                             user_id=user_id,
                             account_id=local_account.id,
                             source="BANK",
                             date=tx_datetime,
-                            amount=Decimal(str(tx["amount"])),
-                            currency=tx["currency"],
-                            type=tx["type"],
-                            status=tx["status"],
+                            amount=Decimal(str(tx.get("amount", 0))),
+                            currency=tx.get("currency") or "NPR",
+                            type=tx.get("type") or "DEBIT",
+                            status=tx.get("status") or "BOOKED",
                             description=tx.get("description"),
                             merchant=tx.get("merchant"),
                             category=tx.get("category"),
@@ -398,7 +584,7 @@ async def login_and_sync_all_accounts(
                     except Exception as e:
                         db.rollback()
                         logger.error(
-                            f"Failed to add transaction {tx['transaction_id']}: {e}",
+                            f"Failed to add transaction {external_transaction_id}: {e}",
                             exc_info=True,
                         )
                 # Update last_transaction_fetched_at if new transactions were fetched

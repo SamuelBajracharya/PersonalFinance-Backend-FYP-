@@ -48,9 +48,29 @@ async def login_to_bank_and_sync(
     record_bank_sync_attempt(db, current_user.user_id, success, failure_reason)
 
     if sync_summary["status"] == "failed":
+        message = sync_summary["message"]
+        lowered = message.lower()
+        if (
+            "authentication failed" in lowered
+            or "could not validate credentials" in lowered
+            or "x-request-id" in lowered
+            or "signature" in lowered
+            or "credentials" in lowered
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=message,
+            )
+
+        if "network error" in lowered:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=message,
+            )
+
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=sync_summary["message"],
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=message,
         )
 
     # Trigger background tasks for predictions and budget evaluation
