@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from app.utils.deps import get_db, get_current_user
 from app.crud.daily_prediction import get_latest_predictions_for_user
@@ -8,13 +8,17 @@ from app.services.stock_predictions import (
     predict_for_instrument,
     predict_for_user_instruments,
 )
+from app.utils.rate_limit import limiter
 
 router = APIRouter()
 
 
 @router.get("/predict/budgets/", response_model=list[BudgetPrediction])
+@limiter.limit("90/minute")
 def get_latest_budget_predictions(
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Fetch the latest stored budget predictions for the authenticated user.
@@ -65,7 +69,9 @@ def get_latest_budget_predictions(
 
 
 @router.get("/predict/stocks/", response_model=list[StockPrediction])
+@limiter.limit("60/minute")
 def get_stock_predictions(
+    request: Request,
     instrument: str | None = Query(
         default=None,
         description="Optional ticker symbol (e.g., AAPL). If omitted, predicts user's synced instruments.",

@@ -1,16 +1,19 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from app.schemas.ai_advisor import AIAdvisorRequest, AIAdvisorResponse
 from app.services.ai_advisor import generate_advice
 from app.utils.deps import get_db, get_current_user
 from app.models.user import User
+from app.utils.rate_limit import limiter
 
 router = APIRouter()
 
 
 @router.post("/advisor", response_model=AIAdvisorResponse)
+@limiter.limit("60/minute")
 async def get_financial_advice(
-    request: AIAdvisorRequest,
+    request: Request,
+    advisor_request: AIAdvisorRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -37,7 +40,7 @@ async def get_financial_advice(
             last_successful_sync is not None
             and last_successful_sync.date() == date.today()
         )
-    resp = await generate_advice(db, current_user.user_id, request.user_prompt)
+    resp = await generate_advice(db, current_user.user_id, advisor_request.user_prompt)
     resp.is_data_fresh = is_data_fresh
     resp.last_successful_sync = last_successful_sync
     resp.last_attempted_sync = last_attempted_sync

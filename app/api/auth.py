@@ -144,10 +144,13 @@ async def login_user(
 
 
 @router.post("/request-password-reset", response_model=TempToken)
+@limiter.limit("15/minute")
 async def request_password_reset(
-    request: PasswordResetRequest, db: Session = Depends(get_db)
+    request: Request,
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_db),
 ):
-    user = get_user_by_email(db, email=request.email)
+    user = get_user_by_email(db, email=payload.email)
     if not user:
         raise HTTPException(
             status_code=404,
@@ -164,7 +167,9 @@ async def request_password_reset(
 
 
 @router.post("/request-otp")
+@limiter.limit("20/minute")
 async def request_otp(
+    request: Request,
     otp_request: OtpRequest,
     current_user: User = Depends(get_current_user_from_temp_token),
     db: Session = Depends(get_db),
@@ -193,7 +198,9 @@ async def request_otp(
 
 
 @router.post("/verify-otp")
+@limiter.limit("30/minute")
 async def verify_otp(
+    request: Request,
     otp_data: OtpVerify,
     current_user: User = Depends(get_current_user_from_temp_token),
     db: Session = Depends(get_db),
@@ -252,7 +259,9 @@ async def verify_otp(
 
 
 @router.post("/reset-password")
+@limiter.limit("15/minute")
 async def reset_password(
+    request: Request,
     password_data: PasswordReset,
     current_user: User = Depends(get_current_user_from_reset_token),
     db: Session = Depends(get_db),
@@ -263,7 +272,12 @@ async def reset_password(
 
 
 @router.post("/create", response_model=TempToken)
-async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+async def create_new_user(
+    request: Request,
+    user: UserCreate,
+    db: Session = Depends(get_db),
+):
     db_user = get_user_by_email(db, email=user.email)
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -281,8 +295,11 @@ async def create_new_user(user: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=TokenWithRewards)  # Change response_model
+@limiter.limit("120/minute")
 async def refresh_token(
-    token_request: RefreshTokenRequest, db: Session = Depends(get_db)
+    request: Request,
+    token_request: RefreshTokenRequest,
+    db: Session = Depends(get_db),
 ):
     current_user = await get_current_user_from_refresh_token(
         token=token_request.refresh_token, db=db
