@@ -15,6 +15,7 @@ jwcrypto
 pydantic[email]
 httpx
 cloudinary
+slowapi
 
 # AI Model Dependencies
 tensorflow

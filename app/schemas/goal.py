@@ -14,6 +14,10 @@ class GoalCreate(GoalBase):
     pass
 
 
+class GoalAmountUpdate(BaseModel):
+    target_amount: Decimal
+
+
 class Goal(GoalBase):
     id: str
     user_id: str

@@ -34,6 +34,17 @@ def get_active_goals_by_user(db: Session, user_id: str) -> list[Goal]:
     )
 
 
+def get_goal_by_id_and_user(db: Session, goal_id: str, user_id: str) -> Goal | None:
+    return (
+        db.query(Goal)
+        .filter(
+            Goal.id == goal_id,
+            Goal.user_id == user_id,
+        )
+        .first()
+    )
+
+
 def update_goal(db: Session, goal: Goal) -> Goal:
     db.add(goal)
     db.commit()

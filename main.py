@@ -8,6 +8,11 @@ import app.services.reward_events
 from app.services.background_tasks import run_daily_bank_sync_loop
 from app.db import Base, engine
 import app.models  # Import all models to register them with Base.metadata
+from app.utils.rate_limit import (
+    limiter,
+    RateLimitExceeded,
+    rate_limit_exceeded_handler,
+)
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -15,6 +20,8 @@ Base.metadata.create_all(bind=engine)
 # Initialize FastAPI app
 app = FastAPI()
 daily_sync_task = None
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS configuration
 origins = [

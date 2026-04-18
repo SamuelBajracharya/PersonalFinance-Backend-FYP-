@@ -7,6 +7,7 @@ from .analytics import router as analytics_router
 from .dashboard import router as dashboard_router
 from .ai_advisor import router as ai_advisor_router
 from .budget import router as budget_router
+from .goals import router as goals_router
 from .what_if_scenarios import router as what_if_scenarios_router
 
 from .rewards import router as rewards_router  # Import the new rewards router
@@ -25,6 +26,7 @@ api_router.include_router(dashboard_router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(ai_advisor_router, prefix="/ai", tags=["ai"])
 api_router.include_router(ai_predictions_router, prefix="/ai", tags=["ai"])
 api_router.include_router(budget_router, prefix="/budgets", tags=["budgets"])
+api_router.include_router(goals_router, prefix="/goals", tags=["goals"])
 
 api_router.include_router(vouchers_router, prefix="/vouchers", tags=["vouchers"])
 

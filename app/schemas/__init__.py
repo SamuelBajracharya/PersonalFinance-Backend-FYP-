@@ -56,7 +56,7 @@ from .budget import (
     BudgetGoalSuggestionsResponse,
     BudgetPredictionDriver,
 )
-from .goal import Goal, GoalCreate, GoalImpactAnalysis
+from .goal import Goal, GoalCreate, GoalImpactAnalysis, GoalAmountUpdate
 from app.models.goal import GoalType, GoalStatus
 
 
@@ -107,6 +107,7 @@ __all__ = [
     "BudgetPredictionDriver",
     "Goal",
     "GoalCreate",
+    "GoalAmountUpdate",
     "GoalImpactAnalysis",
     "GoalType",
     "GoalStatus",

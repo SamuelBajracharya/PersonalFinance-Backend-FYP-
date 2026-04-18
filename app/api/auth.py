@@ -59,6 +59,7 @@ from app.services.cloudinary_service import (
     upload_user_profile_picture,
     get_random_default_profile_image_url,
 )
+from app.utils.rate_limit import limiter
 
 router = APIRouter()
 
@@ -119,7 +120,12 @@ async def _save_profile_picture_for_current_user(
 
 
 @router.post("/login", response_model=TempToken)
-async def login_user(user_login: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login_user(
+    request: Request,
+    user_login: UserLogin,
+    db: Session = Depends(get_db),
+):
     user = get_user_by_email(db, email=user_login.email)
     if not user or not verify_password(user_login.password, user.hashed_password):
         raise HTTPException(

@@ -5,8 +5,13 @@ from typing import List
 
 from app.utils.deps import get_db, get_current_user
 from app.models.user import User
-from app.schemas.goal import Goal, GoalCreate, GoalImpactAnalysis
-from app.crud.goal import create_goal, get_goals_by_user
+from app.schemas.goal import Goal, GoalCreate, GoalImpactAnalysis, GoalAmountUpdate
+from app.crud.goal import (
+    create_goal,
+    get_goals_by_user,
+    get_goal_by_id_and_user,
+    update_goal,
+)
 from app.services.goal_progress import build_goal_impact_analysis
 
 router = APIRouter()
@@ -46,3 +51,33 @@ def goal_impact_analysis(
 ):
     analysis = build_goal_impact_analysis(db, current_user.user_id)
     return [GoalImpactAnalysis(**item) for item in analysis]
+
+
+@router.put("/{goal_id}/amount", response_model=Goal)
+def update_goal_target_amount(
+    goal_id: str,
+    payload: GoalAmountUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if payload.target_amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target amount must be positive.",
+        )
+
+    db_goal = get_goal_by_id_and_user(db, goal_id, current_user.user_id)
+    if not db_goal:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Goal not found",
+        )
+
+    if payload.target_amount < db_goal.current_amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target amount cannot be less than current saved amount.",
+        )
+
+    db_goal.target_amount = payload.target_amount
+    return update_goal(db, db_goal)
